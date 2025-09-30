@@ -1,0 +1,233 @@
+---
+title: "Intership project"
+output: html_document
+date: "2025-09-27"
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,        
+  eval = TRUE,         
+  cache = FALSE,
+  warning = FALSE,     
+  message = FALSE,    
+  results = 'hide'     
+)
+options(width = 80, digits = 3)
+
+
+library(dplyr)
+library(tidyverse)
+library(here)
+library(galah)
+library(sf)
+library(spData)
+library(ggplot2)
+library(Cairo)
+library(kableExtra)
+library(bookdown)
+library(tibble)
+library(purrr)
+library(knitr)
+
+```
+
+
+
+
+
+#### Data description
+
+The ‘Cafes and Restaurants with Seating Capacity’ dataset is sourced from the City of Melbourne’s Census of Land Use and Employment (CLUE). It provides annual records of business establishments located within the Melbourne local government area from 2002 to 2023. The data can be retrieved via the [City of Melbourne Open Data Portal](https://data.melbourne.vic.gov.au/explore/dataset/cafes-and-restaurants-with-seating-capacity/information).
+
+
+<div style="font-size: 80%;">
+```{r var-types,message = FALSE, warning = FALSE, results = 'show'}
+# Read the cleaned CSV files into R environment
+df <- read_csv("data/cafes-and-restaurants-with-seating-capacity.csv")
+
+# Get column names and types
+col_types <- map_chr(df, ~ class(.x)[1])
+# Split into two groups
+first_half <- col_types[1:7]
+second_half <- col_types[8:15]
+# Build a 2-row tibble with padding between groups
+df_split_summary <- tibble::tibble(
+  !!!setNames(as.list(first_half), names(first_half)),
+  !!!setNames(as.list(second_half), names(second_half))
+)
+# Use HTML-based styling but ensure it's compatible with PDF conversion
+kbl(df_split_summary, format = "html", caption = "Variable Types in CLUE Dataset", 
+    table.attr = 'id="tab:var-types"') %>% # Add explicit ID
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), 
+                full_width = FALSE, 
+                position = "center")
+```
+</div>
+
+
+The Table \@ref(tab:var-types) shows the column names and data types in the dataset. It includes numbers, text, and location data . This mix of data types makes it useful for different kinds of analysis. The variable names in the dataset are generally clear and descriptive.
+
+
+
+
+
+
+<div style="font-size: 80%;">
+```{r  summary, message = FALSE, warning = FALSE, results = 'show'}
+
+
+# Dimensions
+n_rows <- nrow(df)
+n_cols <- ncol(df)
+
+# Duplicates
+n_duplicates <- sum(duplicated(df))
+
+# Missing values
+missing_summary <- colSums(is.na(df))
+total_missing <- sum(missing_summary)
+missing_cols <- names(missing_summary[missing_summary > 0])
+missing_cols_str <- paste(missing_cols, collapse = ", ")
+
+# Negative or zero seating values
+invalid_seating <- sum(df$`Number of seats` < 0, na.rm = TRUE)
+
+# Create horizontal summary table
+df_summary <- tibble(
+  `Number of Rows` = n_rows,
+  `Number of Columns` = n_cols,
+  `Number of Duplicate Rows` = n_duplicates,
+  `Total Missing Values` = total_missing,
+  `Columns with NA Values` = length(missing_cols),
+  `Names of Columns with NA Values` = missing_cols_str,
+  `Non-positive Seating Values` = invalid_seating
+)
+
+# Display the summary table with border and proper alignment
+kable(df_summary, format = "html", caption = "Summary of Dataset Structure and Quality Checks") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = F, position = "center")
+
+
+
+```
+</div>
+
+
+
+
+
+As shown in Table \@ref(tab:summary), the dataset has 63,121 rows and 15 columns, with no duplicate entries and negative seating number. There are 1,581 missing values, all in the location-related columns (Longitude, Latitude, location). 
+
+
+<div style="font-size: 80%;">
+```{r year, message = FALSE, warning = FALSE, results = 'show'}
+
+library(tibble)
+library(knitr)
+
+# Get sorted unique census years
+census_years <- sort(unique(df$`Census year`))
+
+# Create one-row, one-cell table
+census_table <- tibble(`Census Years` = paste(census_years, collapse = ", "))
+
+
+kable(census_table, format = "html", caption = "Unique Census Years in the Dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = F)
+
+```
+</div>
+
+Table \@ref(tab:year) shows the dataset covers 22 unique census years, ranging from 2002 to 2023. 
+
+
+<div style="font-size: 80%;">
+```{r  type, message = FALSE, warning = FALSE, results = 'show'}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Get unique values
+seating_types <- sort(unique(na.omit(df$`Seating type`)))
+areas <- sort(unique(na.omit(df$`CLUE small area`)))
+
+# Pad the shorter list so both have equal length
+max_length <- max(length(seating_types), length(areas))
+seating_types <- c(seating_types, rep("", max_length - length(seating_types)))
+areas <- c(areas, rep("", max_length - length(areas)))
+
+# Combine into a transposed table
+transposed_table <- rbind(seating_types, areas)
+rownames(transposed_table) <- c("Seating Type", "CLUE Small Area")
+
+# Display as wide table
+
+kable(transposed_table, format = "html", caption = "Unique Values of Seating Type and CLUE Small Area") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = F, position = "center")
+
+```
+</div>
+
+
+As we can see from Table \@ref(tab:type), there are two types of seating group, with options like Indoor and Outdoor. The CLUE small area column shows many different areas in Melbourne, this allows us to compare business patterns by area.
+
+
+
+```{r seating-boxplot-compact, fig.align = "center",fig.width=8, fig.height=2, echo=FALSE, message=FALSE, warning=FALSE, fig.cap = " Distribution of Seating Capacity"}
+
+
+library(ggplot2)
+
+ggplot(df, aes(y = `Number of seats`)) +
+  geom_boxplot(outlier.size = 0.8, fill = "skyblue") +
+  coord_cartesian(ylim = c(0, 500)) +  # Zoom in to ignore extreme outliers
+  labs(y = "Number of Seats") +
+  theme_minimal(base_size = 10)
+
+
+
+```
+
+Number of Seats is the only continuous numerical variable available in our dataset for analysis. The Figure \@ref(fig:seating-boxplot-compact) shows that most businesses have fewer than 100 seats, but there are some with very high capacities. These large values are likely from big venues like stadiums or racecourses. The plot helps focus on typical businesses by zooming in and excluding extreme values.
+
+
+```{r}
+
+
+# Count occurrences of each industry type
+industry_counts <- table(df$`Industry (ANZSIC4) description`)
+
+# Sorted by frequency
+sorted_industry_counts <- sort(industry_counts, decreasing = TRUE)
+
+
+```
+
+
+
+
+<div style="font-size: 80%;">
+```{r  ind, message = FALSE, warning = FALSE, results = 'show'}
+library(knitr)
+
+# Convert and prepare data frame
+industry_df <- as.data.frame(sorted_industry_counts)
+colnames(industry_df) <- c("Industry_Type", "Count")
+
+
+
+kable(head(industry_df, 8), format = "html", caption = "Table: Top 8 Industry Types by Number of Businesses") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = F, position = "center")
+
+```
+</div>
+
+The Table \@ref(tab:ind) shows the top 8 industry types in Melbourne’s hospitality sector based on the number of businesses recorded in the dataset. Cafes and Restaurants dominate the landscape with over 47,000 entries, followed by Takeaway Food Services and Pubs. Smaller but still notable categories include Accommodation, Bakeries, and Catering Services, highlighting the variety within the food and hospitality industry across Melbourne.
