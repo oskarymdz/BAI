@@ -32,6 +32,8 @@ library(bookdown)
 library(tibble)
 library(purrr)
 library(knitr)
+library(readr)
+library(stringr)
 
 ```
 
@@ -253,35 +255,28 @@ The Table \@ref(tab:ind) shows the top 8 industry types in Melbourne’s hospita
 
 
 ```{r}
-# COMPLETE PIPELINE: RAW DATA TO ULTRA-FINAL (2 INDUSTRIES ONLY)
-# Cafes and Restaurants + Takeaway Food Services ONLY
 
-library(dplyr)
-library(readr)
-library(stringr)
 
-cat("=== COMPLETE DATA TRANSFORMATION PIPELINE ===\n")
-cat("Industries: Cafes and Restaurants + Takeaway Food Services ONLY\n\n")
+
+
+
 
 # Read raw data
 raw_df <- read_csv("data/cafes-and-restaurants-with-seating-capacity.csv")
-cat("Loaded raw data:", nrow(raw_df), "records\n")
 
-# ===============================
-# STEP 1: INDUSTRY FILTER (2 INDUSTRIES ONLY)
-# ===============================
 
-cat("\n=== STEP 1: INDUSTRY FILTER ===\n")
+# Select industry
+
+
+
 
 df_cleaned <- raw_df %>%
-  # ONLY 2 INDUSTRIES
   filter(
     `Industry (ANZSIC4) description` %in% c(
       "Cafes and Restaurants",
       "Takeaway Food Services"
     )
   ) %>%
-  # Basic cleaning
   filter(
     !is.na(`Trading name`),
     !is.na(`Property ID`),
@@ -290,7 +285,6 @@ df_cleaned <- raw_df %>%
     `Census year` >= 2002,
     `Census year` <= 2023
   ) %>%
-  # Create industry categories
   mutate(
     industry = case_when(
       `Industry (ANZSIC4) description` == "Cafes and Restaurants" ~ "Cafes",
@@ -301,16 +295,17 @@ df_cleaned <- raw_df %>%
     `Number of seats` = ifelse(is.na(`Number of seats`) | `Number of seats` <= 0, 1, `Number of seats`)
   )
 
-cat("After industry filter (2 industries only):", nrow(df_cleaned), "records\n")
+
 
 # Show industry breakdown
 industry_counts <- df_cleaned %>% count(industry)
-cat("\nIndustry breakdown:\n")
+
 print(industry_counts)
 
-# ===============================
-# STEP 2: FIRST WORD NORMALIZATION FUNCTION
-# ===============================
+
+
+#  First Word Normalization function
+
 
 get_normalized_first_word <- function(name) {
   if (is.na(name) || name == "") return(NA)
@@ -354,11 +349,11 @@ get_normalized_first_word <- function(name) {
   return(first_word)
 }
 
-# ===============================
-# STEP 3: APPLY NORMALIZATION
-# ===============================
 
-cat("\n=== STEP 3: BUSINESS NAME NORMALIZATION ===\n")
+# Apply Normalization 
+
+
+
 
 df_normalized <- df_cleaned %>%
   mutate(
@@ -366,13 +361,12 @@ df_normalized <- df_cleaned %>%
   ) %>%
   filter(!is.na(normalized_first_word), nchar(normalized_first_word) >= 2)
 
-cat("After normalization:", nrow(df_normalized), "records\n")
 
-# ===============================
-# STEP 4: CONSOLIDATE SEATING TYPES
-# ===============================
 
-cat("\n=== STEP 4: CONSOLIDATE SEATING TYPES ===\n")
+
+#  Consolidate seating types
+
+
 
 df_consolidated <- df_normalized %>%
   group_by(`Census year`, `Property ID`, normalized_first_word) %>%
@@ -402,20 +396,19 @@ cat("After seating consolidation:", nrow(df_consolidated), "records\n")
 # STEP 5: CREATE BUSINESS IDs
 # ===============================
 
-cat("\n=== STEP 5: CREATE BUSINESS IDs ===\n")
+
 
 business_groups <- df_consolidated %>%
   group_by(property_id, normalized_first_word) %>%
   mutate(business_id = cur_group_id()) %>%
   ungroup()
 
-cat("Unique businesses created:", n_distinct(business_groups$business_id), "\n")
 
-# ===============================
-# STEP 6: ADD TEMPORAL METRICS
-# ===============================
 
-cat("\n=== STEP 6: ADD TEMPORAL METRICS ===\n")
+# Add tempral metrics
+
+
+
 
 df_with_lifespans <- business_groups %>%
   group_by(business_id) %>%
@@ -446,13 +439,11 @@ df_final <- df_with_lifespans %>%
   ) %>%
   arrange(census_year, property_id, business_id)
 
-cat("Final dataset:", nrow(df_final), "records,", n_distinct(df_final$business_id), "businesses\n")
 
-# ===============================
-# STEP 7: FIX REMAINING NAME VARIATIONS
-# ===============================
 
-cat("\n=== STEP 7: FIX REMAINING NAME VARIATIONS ===\n")
+#  Fix remaining name variations
+
+
 
 # Find potential name variations at same property
 property_businesses <- df_final %>%
@@ -523,7 +514,7 @@ for (prop_id in properties_to_check) {
   }
 }
 
-cat("Identified", merge_count, "additional merges\n")
+
 
 # Apply merges
 get_final_id <- function(id) {
@@ -566,16 +557,16 @@ df_ultra_final <- df_ultra_final %>%
   ) %>%
   arrange(census_year, property_id, business_id)
 
-cat("After final merges:", nrow(df_ultra_final), "records,", n_distinct(df_ultra_final$business_id), "businesses\n")
 
-# ===============================
-# SAVE RESULTS
-# ===============================
 
-cat("\n=== SAVING RESULTS ===\n")
+
+# SAVE 
+
+
+
 
 write_csv(df_ultra_final, "data/df_ULTRA_FINAL_2industries.csv")
-cat("✅ Saved: df_ULTRA_FINAL_2industries.csv\n")
+
 
 # Create business summary
 business_summary <- df_ultra_final %>%
@@ -600,19 +591,12 @@ business_summary <- df_ultra_final %>%
   arrange(property_id, year_span)
 
 write_csv(business_summary, "data/business_summary_ULTRA_FINAL_2industries.csv")
-cat("✅ Saved: business_summary_ULTRA_FINAL_2industries.csv\n")
 
-# ===============================
-# FINAL SUMMARY
-# ===============================
 
-cat("\n=== TRANSFORMATION COMPLETE ===\n")
-cat("Raw data:", nrow(raw_df), "records\n")
-cat("After 2-industry filter:", nrow(df_cleaned), "records\n")
-cat("After seating consolidation:", nrow(df_consolidated), "records\n")
-cat("Final ultra dataset:", nrow(df_ultra_final), "records\n")
-cat("\nUnique businesses:", n_distinct(df_ultra_final$business_id), "\n")
-cat("Average records per business:", round(nrow(df_ultra_final) / n_distinct(df_ultra_final$business_id), 1), "\n")
+# SUMMARY
+
+
+
 
 # Industry breakdown
 industry_final <- df_ultra_final %>%
@@ -620,7 +604,7 @@ industry_final <- df_ultra_final %>%
   slice_head(n = 1) %>%
   count(industry)
 
-cat("\nFinal business count by industry:\n")
+
 print(industry_final)
 
 # Lifespan distribution
@@ -630,13 +614,10 @@ lifespan_dist <- df_ultra_final %>%
   count(lifespan_group) %>%
   mutate(percentage = round(n / sum(n) * 100, 1))
 
-cat("\nLifespan distribution:\n")
+
 print(lifespan_dist)
 
-cat("\n🎉 DATA READY FOR MAP VISUALIZATION!\n")
-cat("Industries: Cafes + Takeaway ONLY\n")
-cat("Records:", nrow(df_ultra_final), "\n")
-cat("Businesses:", n_distinct(df_ultra_final$business_id), "\n")
+
 ```
 
 
@@ -646,48 +627,34 @@ cat("Businesses:", n_distinct(df_ultra_final$business_id), "\n")
 
 
 ```{r}
-# ===============================
-# APPLY BIAS FILTER LOGIC TO ULTRA DATA
-# ===============================
-# This script enhances df_ULTRA_FINAL_2industries.csv with bias filter columns
-# to match the structure of df_enhanced_with_filters.csv
 
-library(tidyverse)
+
 
 # Load the Ultra final data
 df_ultra <- read_csv("data/df_ULTRA_FINAL_2industries.csv")
 
-cat("Loaded", nrow(df_ultra), "records from Ultra data\n")
-cat("Unique businesses:", n_distinct(df_ultra$business_id), "\n")
 
-# ===============================
-# CALCULATE BUSINESS OPERATING STATUS
-# ===============================
+# Calculate business operating status 
+
 
 business_status <- df_ultra %>%
   group_by(business_id) %>%
   summarise(
     business_start_year = min(census_year),
     business_end_year = max(census_year),
-    still_operating = (business_end_year == 2023),  # 2023 is the latest year in dataset
+    still_operating = (business_end_year == 2023),  
     lifespan_group = first(lifespan_group),
     .groups = "drop"
   )
 
-cat("\nBusiness Status Summary:\n")
-cat("Total unique businesses:", nrow(business_status), "\n")
-cat("Still operating in 2023:", sum(business_status$still_operating), "\n")
-cat("Closed businesses:", sum(!business_status$still_operating), "\n")
 
-# ===============================
-# ADD BIAS FILTER LOGIC
-# ===============================
+# ADD bias filters
 
 enhanced_ultra <- df_ultra %>%
   left_join(business_status %>% select(business_id, business_start_year, business_end_year, still_operating), 
             by = "business_id") %>%
   mutate(
-    # BIAS FILTER LOGIC:
+
     # TRUE = exclude from bias-corrected analysis (but keep for temporal analysis)
     # FALSE = include in all analysis
     bias_filter = case_when(
@@ -717,26 +684,19 @@ enhanced_ultra <- df_ultra %>%
       TRUE ~ "Unknown"
     )
   ) %>%
-  # Clean up temporary columns
   select(-business_start_year, -business_end_year, -still_operating) %>%
-  # Arrange for consistency
   arrange(census_year, property_id, business_id)
 
-# ===============================
-# QUALITY ANALYSIS & VALIDATION
-# ===============================
+# Check quality
 
-cat("\n=== BIAS FILTER ANALYSIS ===\n")
+
 
 # Overall filtering impact
 total_records <- nrow(enhanced_ultra)
 filtered_records <- sum(enhanced_ultra$bias_filter)
 kept_records <- total_records - filtered_records
 
-cat("Total records:", total_records, "\n")
-cat("Records to filter out (bias_filter = TRUE):", filtered_records, "\n")
-cat("Records to keep (bias_filter = FALSE):", kept_records, "\n")
-cat("Filter rate:", round(filtered_records / total_records * 100, 1), "%\n")
+
 
 # Business-level analysis
 business_analysis <- enhanced_ultra %>%
@@ -746,7 +706,7 @@ business_analysis <- enhanced_ultra %>%
   count(lifespan_group, business_status) %>%
   pivot_wider(names_from = business_status, values_from = n, values_fill = 0)
 
-cat("\n=== Business Count by Status ===\n")
+
 print(business_analysis)
 
 # Lifespan group impact
@@ -764,7 +724,7 @@ lifespan_impact <- enhanced_ultra %>%
   ) %>%
   arrange(lifespan_group)
 
-cat("\n=== Impact by Lifespan Group ===\n")
+
 print(lifespan_impact)
 
 # Area impact analysis
@@ -796,7 +756,7 @@ temporal_impact <- enhanced_ultra %>%
     .groups = "drop"
   )
 
-cat("\n=== Temporal Impact (Last 8 Years) ===\n")
+
 print(tail(temporal_impact, 8))
 
 # Industry impact
@@ -813,138 +773,26 @@ industry_impact <- enhanced_ultra %>%
     .groups = "drop"
   )
 
-cat("\n=== Impact by Industry ===\n")
+
 print(industry_impact)
 
-# ===============================
-# VERIFY COLUMN NAMES MATCH
-# ===============================
 
-cat("\n=== COLUMN NAME VERIFICATION ===\n")
-cat("Columns in enhanced Ultra data:\n")
-print(names(enhanced_ultra))
 
-# Expected columns based on enhanced_with_filters structure
-expected_columns <- c(
-  "property_id", "business_id", "census_year", "industry", "clue_area",
-  "trading_name", "business_address", "building_address", "seating_type",
-  "num_seats", "lifespan_years", "lifespan_group", "lon", "lat",
-  "businesses_at_property", "bias_filter", "business_status", "analysis_usage"
-)
 
-cat("\nExpected columns from reference data:\n")
-print(expected_columns)
 
-cat("\nColumn match check:\n")
-cat("All expected columns present:", all(expected_columns %in% names(enhanced_ultra)), "\n")
-cat("Column count matches:", length(names(enhanced_ultra)) == length(expected_columns), "\n")
 
-# ===============================
-# USAGE EXAMPLES FOR ANALYSIS
-# ===============================
 
-cat("\n=== USAGE EXAMPLES ===\n")
-cat("# For temporal/growth analysis (preserve all data):\n")
-cat("growth_data <- enhanced_ultra  # Use ALL records\n")
-cat("\n# For bias-corrected lifespan analysis:\n")
-cat("lifespan_data <- enhanced_ultra %>% filter(!bias_filter)\n")
-cat("\n# Example: Success rate analysis (bias-corrected):\n")
-cat("success_analysis <- enhanced_ultra %>%\n")
-cat("  filter(!bias_filter) %>%\n")
-cat("  group_by(clue_area) %>%\n")
-cat("  summarise(\n")
-cat("    total_businesses = n_distinct(business_id),\n")
-cat("    long_term_success = sum(lifespan_group == '>12 yrs') / total_businesses * 100\n")
-cat("  )\n")
 
-# Sample data to show the structure
-cat("\n=== SAMPLE ENHANCED DATA ===\n")
-sample_data <- enhanced_ultra %>%
-  select(business_id, census_year, trading_name, clue_area, lifespan_group, 
-         bias_filter, business_status, analysis_usage) %>%
-  head(10)
-print(sample_data)
 
-# ===============================
 # SAVE ENHANCED DATA
-# ===============================
+
 
 output_file <- "df_ULTRA_enhanced_with_filters.csv"
 write_csv(enhanced_ultra, output_file)
-cat("\n✅ Enhanced Ultra data saved to:", output_file, "\n")
 
-# Create detailed summary report
-filter_summary <- enhanced_ultra %>%
-  group_by(business_id) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  group_by(lifespan_group, business_status, industry, clue_area) %>%
-  summarise(
-    businesses = n(),
-    .groups = "drop"
-  ) %>%
-  arrange(lifespan_group, business_status, industry, clue_area)
 
-write_csv(filter_summary, "df_ULTRA_bias_filter_summary.csv")
-cat("✅ Detailed filter summary saved to: df_ULTRA_bias_filter_summary.csv\n")
 
-# Create comparison metrics for before/after filtering
-comparison_metrics <- enhanced_ultra %>%
-  group_by(business_id) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  group_by(clue_area) %>%
-  summarise(
-    total_businesses = n(),
-    biased_businesses = sum(bias_filter),
-    clean_businesses = sum(!bias_filter),
-    filter_rate = round(biased_businesses / total_businesses * 100, 1),
-    
-    # Before filtering (biased)
-    long_term_biased = sum(lifespan_group == ">12 yrs") / total_businesses * 100,
-    
-    # After filtering (corrected)
-    long_term_corrected = sum(lifespan_group == ">12 yrs" & !bias_filter) / clean_businesses * 100,
-    
-    .groups = "drop"
-  ) %>%
-  arrange(desc(total_businesses))
 
-write_csv(comparison_metrics, "df_ULTRA_area_comparison.csv")
-cat("✅ Area comparison metrics saved to: df_ULTRA_area_comparison.csv\n")
-
-# ===============================
-# FINAL VALIDATION
-# ===============================
-
-cat("\n🎉 ENHANCED ULTRA DATA WITH BIAS FILTERS COMPLETE! 🎉\n")
-cat("✅ Single data file with flexible filtering\n")
-cat("✅ Transparent bias filter column added\n") 
-cat("✅ Preserves temporal accuracy for growth charts\n")
-cat("✅ Enables bias-corrected lifespan analysis\n")
-cat("✅ Column names match reference structure\n")
-cat("✅ Ready for advanced statistical analysis!\n")
-
-# Final statistics
-unique_businesses <- n_distinct(enhanced_ultra$business_id)
-biased_businesses <- enhanced_ultra %>% 
-  group_by(business_id) %>% 
-  summarise(is_biased = any(bias_filter), .groups = "drop") %>%
-  filter(is_biased) %>%
-  nrow()
-
-cat("\n=== FINAL STATISTICS ===\n")
-cat("Total unique businesses:", unique_businesses, "\n")
-cat("Businesses with biased lifespans:", biased_businesses, 
-    "(", round(biased_businesses/unique_businesses*100, 1), "%)\n")
-cat("Clean businesses for lifespan analysis:", unique_businesses - biased_businesses,
-    "(", round((unique_businesses - biased_businesses)/unique_businesses*100, 1), "%)\n")
-cat("Total temporal records:", nrow(enhanced_ultra), "\n")
-cat("Records for bias-corrected analysis:", sum(!enhanced_ultra$bias_filter), "\n")
-
-cat("\n✨ Analysis ready! Use the bias_filter column to switch between:\n")
-cat("   - Temporal analysis (all data)\n")
-cat("   - Lifespan analysis (filter out bias_filter == TRUE)\n")
 ```
 
 
