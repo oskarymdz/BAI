@@ -392,10 +392,6 @@ df_consolidated <- df_normalized %>%
 
 cat("After seating consolidation:", nrow(df_consolidated), "records\n")
 
-# ===============================
-# STEP 5: CREATE BUSINESS IDs
-# ===============================
-
 
 
 business_groups <- df_consolidated %>%
@@ -801,18 +797,18 @@ write_csv(enhanced_ultra, output_file)
 
 
 ```{r}
-library(tidyverse)
 
-# Load original data
-df_original <- read_csv("data/df_ULTRA_enhanced_with_filters.csv")
 
-# Address extraction function
-extract_street_complete <- function(address) {
+# Load data
+df_original <- read_csv("data/df_enhanced_with_filters.csv")
+
+# EXTRACTION 
+extract_street_corrected <- function(address) {
   if (is.na(address) || str_trim(address) == "") return(NA_character_)
   
   address_clean <- str_trim(address)
   
-  # list of Melbourne street types
+  # Complete street types
   street_types <- c(
     "Boulevard", "Parade", "Avenue", "Street", "Road", 
     "Lane", "Place", "Court", "Drive", "Walk", 
@@ -822,23 +818,23 @@ extract_street_complete <- function(address) {
     "Alley", "Market", "Bridge", "Freeway"
   )
   
-  # Pattern: Street name + type (ignoring unit/level prefixes)
+  
   pattern <- paste0(
     "([A-Za-z][A-Za-z\\s'-]+?)\\s+(",
     paste(street_types, collapse = "|"),
-    ")(?:\\s+(East|West|North|South))?\\b"
+    ")\\b"  # REMOVED: (?:\\s+(East|West|North|South))?
   )
   
-  # Try direct extraction
+  # Direct extraction
   match <- str_extract(address_clean, regex(pattern, ignore_case = TRUE))
   if (!is.na(match)) {
     return(str_to_title(str_trim(match)))
   }
   
-  # If has comma, try each part
+  # Try after comma
   if (str_detect(address_clean, ",")) {
     parts <- str_split(address_clean, ",")[[1]]
-    for (part in rev(parts)) {  # Try from end first
+    for (part in rev(parts)) {
       match <- str_extract(str_trim(part), regex(pattern, ignore_case = TRUE))
       if (!is.na(match)) {
         return(str_to_title(str_trim(match)))
@@ -859,10 +855,14 @@ extract_street_complete <- function(address) {
   return(NA_character_)
 }
 
-# Apply to ALL data
-df_fixed <- df_original %>%
+
+
+# Apply to full dataset
+df <- read_csv("data/df_enhanced_with_filters.csv")
+
+df_corrected <- df %>%
   mutate(
-    street_address = map_chr(business_address, extract_street_complete),
+    street_address = map_chr(business_address, extract_street_corrected),
     street_type = map_chr(street_address, function(s) {
       if (is.na(s)) return(NA_character_)
       types <- c("Boulevard", "Parade", "Avenue", "Street", "Road", "Lane", 
@@ -881,10 +881,10 @@ df_fixed <- df_original %>%
 
 
 
+# Save 
+write_csv(df_corrected, "data/df_with_streets.csv")
 
 
-# Save
-write_csv(df_fixed, "data/df_with_streets.csv")
 
 ```
 
