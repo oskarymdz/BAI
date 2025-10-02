@@ -34,7 +34,7 @@ library(purrr)
 library(knitr)
 library(readr)
 library(stringr)
-
+library(purrr)
 ```
 
 
@@ -794,95 +794,106 @@ write_csv(enhanced_ultra, output_file)
 
 
 
-
+#### Add new features
 
 ```{r}
 
 
-# Load data
-df_original <- read_csv("data/df_enhanced_with_filters.csv")
 
-# EXTRACTION 
-extract_street_corrected <- function(address) {
+df <- read_csv("data/df_enhanced_with_filters.csv", show_col_types = FALSE)
+
+
+# Full street types 
+street_types_full <- c(
+  "Boulevard","Parade","Avenue","Street","Road","Lane","Place","Court","Drive","Walk",
+  "Terrace","Highway","Way","Crescent","Square","Mall","Arcade","Circuit","Grove","Close",
+  "Esplanade","Promenade","Circus","Quay","Alley","Market","Bridge","Freeway","Causeway",
+  "Broadway","Link","Row","Mews","Path","Steps","Rise","Track","Expressway","Bypass"
+)
+
+# Abbreviations to expand AFTER we match
+abbr_map <- c(
+  "\\bSt\\b"  = "Street",
+  "\\bRd\\b"  = "Road",
+  "\\bAve\\b" = "Avenue",
+  "\\bLn\\b"  = "Lane",
+  "\\bPde\\b" = "Parade",
+  "\\bBlvd\\b"= "Boulevard",
+  "\\bBvd\\b" = "Boulevard",
+  "\\bPl\\b"  = "Place",
+  "\\bCt\\b"  = "Court",
+  "\\bDr\\b"  = "Drive",
+  "\\bTce\\b" = "Terrace",
+  "\\bCres\\b"= "Crescent",
+  "\\bEspl\\b"= "Esplanade",
+  "\\bHwy\\b" = "Highway",
+  "\\bWy\\b"  = "Way",
+  "\\bArc\\b" = "Arcade"
+)
+
+# Accept either full types OR common abbreviations 
+types_alt_with_abbr <- paste(
+  c(street_types_full,
+    "St","Rd","Ave","Ln","Pde","Blvd","Bvd","Pl","Ct","Dr","Tce","Cres","Espl","Hwy","Wy","Arc"),
+  collapse = "|"
+)
+
+# Drop common unit/building prefixes at the start
+prefix_re <- regex(
+  "^(Shop|Unit|Suite|Level|Lvl|Ground|Floor|Tenancy|Kiosk|Building|Bldg|Block|Office|Room|Rm|Apt|Apartment|Podium|Mezzanine)\\s*[A-Za-z0-9\\-/]*\\s*,?\\s*",
+  ignore_case = TRUE
+)
+
+# Core extractor 
+extract_street <- function(address) {
   if (is.na(address) || str_trim(address) == "") return(NA_character_)
-  
-  address_clean <- str_trim(address)
-  
-  # Complete street types
-  street_types <- c(
-    "Boulevard", "Parade", "Avenue", "Street", "Road", 
-    "Lane", "Place", "Court", "Drive", "Walk", 
-    "Terrace", "Highway", "Way", "Crescent", "Square",
-    "Mall", "Arcade", "Circuit", "Grove", "Close",
-    "Esplanade", "Promenade", "Circus", "Quay", 
-    "Alley", "Market", "Bridge", "Freeway"
-  )
-  
-  
-  pattern <- paste0(
-    "([A-Za-z][A-Za-z\\s'-]+?)\\s+(",
-    paste(street_types, collapse = "|"),
-    ")\\b"  # REMOVED: (?:\\s+(East|West|North|South))?
-  )
-  
-  # Direct extraction
-  match <- str_extract(address_clean, regex(pattern, ignore_case = TRUE))
-  if (!is.na(match)) {
-    return(str_to_title(str_trim(match)))
-  }
-  
-  # Try after comma
-  if (str_detect(address_clean, ",")) {
-    parts <- str_split(address_clean, ",")[[1]]
-    for (part in rev(parts)) {
-      match <- str_extract(str_trim(part), regex(pattern, ignore_case = TRUE))
-      if (!is.na(match)) {
-        return(str_to_title(str_trim(match)))
-      }
+
+  # Normalise + remove unit/building prefixes
+  addr <- str_squish(address)
+  addr <- str_remove(addr, prefix_re)
+
+  # Pattern: "<Name tokens> <Type|Abbrev>"
+  # Works for "Little Latrobe St", "Riverside Quay", "Collins Street", etc.
+  pattern <- paste0("([A-Za-z][A-Za-z\\s'\\-]*?)\\s+(", types_alt_with_abbr, ")\\b")
+
+  m <- str_extract(addr, regex(pattern, ignore_case = TRUE))
+
+  # If not found, retry within comma-separated parts (helps with locality suffixes)
+  if (is.na(m) && str_detect(addr, ",")) {
+    parts <- str_split(addr, ",")[[1]]
+    for (p in parts) {
+      mm <- str_extract(str_squish(p), regex(pattern, ignore_case = TRUE))
+      if (!is.na(mm)) { m <- mm; break }
     }
   }
-  
-  # After unit/level prefix
-  after_prefix <- str_remove(address_clean, 
-    regex("^(Part|Shop|Unit|Level|Ground|Floor|Tenancy|Restaurant|Shed|Kiosk|Rear)\\s*[\\d,\\s-]*", 
-          ignore_case = TRUE))
-  
-  match <- str_extract(after_prefix, regex(pattern, ignore_case = TRUE))
-  if (!is.na(match)) {
-    return(str_to_title(str_trim(match)))
+  if (is.na(m)) return(NA_character_)
+
+  # Remove leading articles OR single-letter tokens (e.g., "A Bourke Street")
+  m <- str_remove(m, regex("^(?i)(a|an|the)\\s+"))
+  m <- str_remove(m, regex("^([A-Z])\\s+(?=[A-Za-z])"))
+
+  # Expand abbreviations inside the matched phrase
+  for (pat in names(abbr_map)) {
+    m <- str_replace_all(m, regex(pat, ignore_case = TRUE), abbr_map[[pat]])
   }
-  
-  return(NA_character_)
+
+  # Title case and tidy
+  str_to_title(str_squish(m))
 }
 
-
-
-# Apply to full dataset
-df <- read_csv("data/df_enhanced_with_filters.csv")
-
-df_corrected <- df %>%
+# Apply + derive street_type 
+df_with_streets <- df %>%
   mutate(
-    street_address = map_chr(business_address, extract_street_corrected),
-    street_type = map_chr(street_address, function(s) {
-      if (is.na(s)) return(NA_character_)
-      types <- c("Boulevard", "Parade", "Avenue", "Street", "Road", "Lane", 
-                 "Place", "Court", "Drive", "Walk", "Terrace", "Highway",
-                 "Way", "Crescent", "Square", "Mall", "Arcade", "Circuit",
-                 "Grove", "Close", "Esplanade", "Promenade", "Circus", 
-                 "Quay", "Alley", "Market", "Bridge", "Freeway")
-      for (type in types) {
-        if (str_detect(s, regex(paste0("\\b", type, "\\b"), ignore_case = TRUE))) {
-          return(type)
-        }
-      }
-      return(NA_character_)
-    })
+    street_address = map_chr(business_address, extract_street),
+    street_type    = str_extract(street_address, paste(street_types_full, collapse = "|"))
   )
 
 
 
-# Save 
-write_csv(df_corrected, "data/df_with_streets.csv")
+# Save outputs 
+write_csv(df_with_streets, "data/df_with_streets.csv")
+
+
 
 
 
@@ -901,6 +912,47 @@ write_csv(df_corrected, "data/df_with_streets.csv")
 
 
 
+
+
+```{r}
+
+
+
+df <- read_csv("data/df_with_streets.csv", show_col_types = FALSE)
+
+# replacement in street_address
+df$street_address[df$street_address == "Alfred Deakin Building Federation Square"] <- "Federation Square"
+df$street_address[df$street_address == "Cafe Royal Botanic Gardens Alexandra Avenue"] <- "Alexandra Avenue"
+df$street_address[df$street_address == "Montefiore House Exhibition Mews"] <- "Exhibition Mews"
+df$street_address[df$street_address == "Restaurant Melbourne Zoological Gardens Elliott Avenue"] <- "Elliott Avenue"
+df$street_address[df$street_address == "Restaurant Old Observatory Building Royal Botanic Gardens Birdwood Avenue"] <- "Birdwood Avenue"
+df$street_address[df$street_address == "Shed F Queen Victoria Market"] <- "Victoria Market"
+df$street_address[df$street_address == "Shed M Queen Victoria Market"] <- "Victoria Market"
+df$street_address[df$street_address == "Square Federation Square"] <- "Federation Square"
+df$street_address[df$street_address == "Street Kilda Road"] <- "St Kilda Road"
+df$street_address[df$street_address == "Street Andrews Place"] <- "St Andrews Place"
+df$street_address[df$street_address == "Tea Rooms Royal Botanic Gardens Alexandra Avenue"] <- "Alexandra Avenue"
+df$street_address[df$street_address == "Yarra Building Federation Square"] <- "Federation Square"
+df$street_address[df$street_address == "Zoological Gardens Elliott Avenue"] <- "Elliott Avenue"
+
+# Remove street_type 
+df <- df %>% select(-any_of("street_type"))
+
+# Save
+write_csv(df, "data/df_with_streets.csv")
+
+# Also save updated unique streets
+unique_streets <- df %>%
+  filter(!is.na(street_address)) %>%
+  distinct(street_address) %>%
+  arrange(street_address)
+
+write_csv(unique_streets, "data/unique_streets.csv")
+
+
+
+
+```
 
 
 
