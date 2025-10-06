@@ -959,12 +959,446 @@ write_csv(unique_streets, "data/unique_streets.csv")
 
 
 
+```{r}
+library(tidyverse)
+
+# Load data
+df <- read_csv("data/df_with_streets.csv")
+
+
+
+# Get one row per business
+business_level <- df %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+
+# Calculator all streets
+
+
+street_stats_all <- business_level %>%
+  filter(
+    !is.na(street_address),      # Must have street
+    bias_filter == FALSE          # Bias-corrected sample
+  ) %>%
+  group_by(street_address) %>%
+  summarise(
+    total_businesses = n(),
+    closed_businesses = sum(!str_detect(business_status, "Operating")),
+    operating_12plus = sum(str_detect(business_status, "Long-term Success")),
+    
+    # calculated for ALL streets regardless of sample size
+    street_avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    street_median_lifespan = median(lifespan_years, na.rm = TRUE),
+    street_success_rate = mean(lifespan_group == ">12 yrs") * 100,
+    
+    street_avg_seats = mean(num_seats, na.rm = TRUE),
+    street_median_seats = median(num_seats, na.rm = TRUE),
+    
+    # Add reliability indicator based on sample size
+    reliability = case_when(
+      total_businesses >= 10 ~ "High (10+)",
+      total_businesses >= 5 ~ "Medium (5-9)",
+      total_businesses >= 3 ~ "Low (3-4)",
+      TRUE ~ "Very Low (1-2)"
+    ),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(desc(street_success_rate))
+
+cat("Total streets with calculated stats:", nrow(street_stats_all), "\n\n")
+
+# Show distribution by reliability
+cat("STREET DISTRIBUTION BY SAMPLE SIZE:\n")
+reliability_dist <- street_stats_all %>%
+  count(reliability) %>%
+  mutate(pct = round(100 * n / sum(n), 1))
+print(reliability_dist)
+
+
+# Join to full dadaset
+
+
+df_final <- df %>%
+  left_join(
+    street_stats_all %>% 
+      select(street_address, street_avg_lifespan, street_success_rate, 
+             street_median_seats, total_businesses, reliability),
+    by = "street_address"
+  ) %>%
+  mutate(
+    street_stats_imputed = is.na(street_address)
+  )
+
+# Check coverage
+coverage <- df_final %>%
+  summarise(
+    total_records = n(),
+    has_calculated_stats = sum(!is.na(street_avg_lifespan)),
+    needs_imputation = sum(is.na(street_avg_lifespan))
+  )
+
+
+
+if (coverage$needs_imputation > 0) {
+  cat("\nImputing for records with no extractable street...\n")
+  
+  overall_medians <- df_final %>%
+    filter(!is.na(street_avg_lifespan)) %>%
+    summarise(
+      median_lifespan = median(street_avg_lifespan),
+      median_success = median(street_success_rate),
+      median_seats = median(street_median_seats)
+    )
+  
+  df_final <- df_final %>%
+    mutate(
+      street_avg_lifespan = coalesce(street_avg_lifespan, overall_medians$median_lifespan),
+      street_success_rate = coalesce(street_success_rate, overall_medians$median_success),
+      street_median_seats = coalesce(street_median_seats, overall_medians$median_seats),
+      total_businesses = coalesce(total_businesses, 0L),
+      reliability = coalesce(reliability, "Imputed")
+    )
+}
+
+
+
+# SAVE
+
+
+write_csv(df_final, "df_with_street_stats_ALL_STREETS.csv")
+write_csv(street_stats_all, "street_statistics_ALL_317.csv")
+
+
+```
 
 
 
 
 
 
+```{r}
+library(tidyverse)
+library(sf)
+
+
+# 1. Load data
+
+
+df_source <- read_csv("df_with_street_stats_ALL_STREETS.csv")
+
+
+# 2. Calculate spatial competition (300m)
+
+
+
+
+# Get business entry points (ALL businesses for true market density)
+business_entry_all <- df_source %>%
+  group_by(business_id) %>%
+  arrange(census_year) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  select(business_id, entry_year = census_year, industry, lat, lon, num_seats)
+
+# Convert to spatial
+business_sf <- st_as_sf(
+  business_entry_all %>% filter(!is.na(lat), !is.na(lon)),
+  coords = c("lon", "lat"),
+  crs = 4326
+) %>% st_transform(28355)
+
+radius_m <- 300
+n <- nrow(business_sf)
+
+competition_metrics <- data.frame(
+  business_id = business_sf$business_id,
+  entry_year = business_sf$entry_year,
+  industry = business_sf$industry,
+  competitors_300m = numeric(n),
+  same_industry_300m = numeric(n),
+  other_industry_300m = numeric(n)
+)
+
+buffers <- st_buffer(business_sf, dist = radius_m)
+
+cat("Processing", n, "businesses...\n")
+pb <- txtProgressBar(max = n, style = 3)
+
+for (i in 1:n) {
+  if (i %% 500 == 0) setTxtProgressBar(pb, i)
+  
+  focal_year <- business_sf$entry_year[i]
+  focal_industry <- business_sf$industry[i]
+  
+  # Businesses existing at entry year
+  existing <- business_sf$entry_year <= focal_year
+  
+  # Total competition
+  overlaps <- st_intersects(buffers[i,], business_sf[existing,], sparse = FALSE)
+  competition_metrics$competitors_300m[i] <- sum(overlaps) - 1
+  
+  # Same industry
+  same_ind <- existing & business_sf$industry == focal_industry
+  overlaps_same <- st_intersects(buffers[i,], business_sf[same_ind,], sparse = FALSE)
+  competition_metrics$same_industry_300m[i] <- sum(overlaps_same) - 1
+  
+  # Other industry
+  other_ind <- existing & business_sf$industry != focal_industry
+  overlaps_other <- st_intersects(buffers[i,], business_sf[other_ind,], sparse = FALSE)
+  competition_metrics$other_industry_300m[i] <- sum(overlaps_other) - 1
+}
+
+close(pb)
+
+# Add derived metrics
+competition_metrics <- competition_metrics %>%
+  mutate(
+    high_competition = as.numeric(competitors_300m >= 15),
+    industry_ratio = same_industry_300m / (competitors_300m + 1),
+    competition_cat = case_when(
+      competitors_300m == 0 ~ "Isolated",
+      competitors_300m <= 5 ~ "Very Low (1-5)",
+      competitors_300m <= 15 ~ "Low (6-15)",
+      competitors_300m <= 30 ~ "Medium (16-30)",
+      competitors_300m <= 50 ~ "High (31-50)",
+      TRUE ~ "Very High (>50)"
+    )
+  )
+
+
+
+
+competition_metrics %>% 
+  count(competition_cat) %>% 
+  mutate(pct = round(100*n/sum(n), 1)) %>%
+  print()
+
+
+competition_metrics %>%
+  group_by(industry) %>%
+  summarise(
+    n = n(),
+    mean = round(mean(competitors_300m), 1),
+    median = median(competitors_300m),
+    p75 = quantile(competitors_300m, 0.75),
+    max = max(competitors_300m),
+    .groups = "drop"
+  ) %>% print()
+
+
+# Prepare modelling samples
+
+
+
+# One row per business
+business_level <- df_source %>%
+  group_by(business_id) %>%
+  arrange(census_year) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+
+
+# Apply bias filter
+df_model <- business_level %>%
+  filter(bias_filter == FALSE)
+
+
+# Join competetion metrics
+
+
+
+
+df_with_comp <- df_model %>%
+  left_join(
+    competition_metrics %>% 
+      select(business_id, competitors_300m, same_industry_300m, 
+             other_industry_300m, high_competition, industry_ratio, competition_cat),
+    by = "business_id"
+  )
+
+
+# 5. Select streets based on performance
+
+
+
+
+street_performance <- df_with_comp %>%
+  filter(!is.na(street_address)) %>%
+  group_by(street_address) %>%
+  summarise(
+    n_businesses = n(),
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    success_rate = mean(lifespan_group == ">12 yrs") * 100,
+    median_lifespan = median(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(n_businesses >= 5)
+
+
+# Top 20 by success rate
+top20_success <- street_performance %>%
+  arrange(desc(success_rate)) %>%
+  head(20)
+
+
+
+# Bottom 20 by success rate
+bottom20_success <- street_performance %>%
+  arrange(success_rate) %>%
+  head(20)
+
+
+
+# Top 20 by avg lifespan
+top20_lifespan <- street_performance %>%
+  arrange(desc(avg_lifespan)) %>%
+  head(20)
+
+
+
+# Bottom 20 by avg lifespan
+bottom20_lifespan <- street_performance %>%
+  arrange(avg_lifespan) %>%
+  head(20)
+
+
+
+# Combine
+best_streets <- unique(c(top20_success$street_address, top20_lifespan$street_address))
+worst_streets <- unique(c(bottom20_success$street_address, bottom20_lifespan$street_address))
+selected_streets <- unique(c(best_streets, worst_streets))
+
+
+# feature processing
+
+
+
+df_features <- df_with_comp %>%
+  mutate(
+    # Target variable
+    lifespan_numeric = lifespan_years,
+    
+    # Business characteristics
+    industry_cafe = as.numeric(industry == "Cafes"),
+    log_seats = log1p(num_seats),
+    
+    # Size categories
+    size_small = as.numeric(num_seats <= 40),
+    size_medium = as.numeric(num_seats > 40 & num_seats <= 80),
+    size_large = as.numeric(num_seats > 80),
+    
+    # Competition metrics
+    comp_300m = competitors_300m,
+    same_ind_300m = same_industry_300m,
+    other_ind_300m = other_industry_300m,
+    comp_density = competitors_300m / 100,
+    industry_dominance = same_industry_300m / (competitors_300m + 1),
+    
+    # Competition flags
+    high_comp = as.numeric(competitors_300m >= 30),
+    very_high_comp = as.numeric(competitors_300m >= 50),
+    isolated = as.numeric(competitors_300m == 0),
+    
+    # Temporal
+    entry_year_norm = (census_year - 2002) / (2023 - 2002),
+    is_recent = as.numeric(census_year >= 2015),
+    
+    # Location
+    dist_cbd = sqrt((lon - 144.9631)^2 + (lat - (-37.8136))^2) * 111,
+    
+    # Property
+    property_crowding = as.numeric(businesses_at_property >= 3)
+  )
+
+# Create street dummies for selected streets
+for (street in selected_streets) {
+  col_name <- paste0("street_", str_replace_all(str_to_lower(street), "[^a-z0-9]", "_"))
+  df_features[[col_name]] <- as.numeric(df_features$street_address == street)
+}
+
+# Add street category indicators
+df_features <- df_features %>%
+  mutate(
+    on_best_street = as.numeric(street_address %in% best_streets),
+    on_worst_street = as.numeric(street_address %in% worst_streets)
+  )
+
+
+# Validation
+
+
+# Check for duplicate columns
+dup_cols <- names(df_features)[duplicated(names(df_features))]
+if (length(dup_cols) > 0) {
+  cat("WARNING: Duplicate columns found:", paste(dup_cols, collapse = ", "), "\n")
+} else {
+  cat("✓ No duplicate columns\n")
+}
+
+# Check NAs in key features
+key_features <- c("lifespan_numeric", "industry_cafe", "log_seats", 
+                  "comp_300m", "same_ind_300m", "entry_year_norm", "dist_cbd")
+
+na_summary <- df_features %>%
+  summarise(across(all_of(key_features), ~sum(is.na(.))))
+
+cat("\nNA counts in key features:\n")
+print(t(na_summary))
+
+# Summary by street type
+cat("\n\nOutcomes by street type:\n")
+df_features %>%
+  mutate(street_type = case_when(
+    on_best_street == 1 ~ "Best Streets",
+    on_worst_street == 1 ~ "Worst Streets",
+    TRUE ~ "Other Streets"
+  )) %>%
+  group_by(street_type) %>%
+  summarise(
+    n = n(),
+    mean_lifespan = round(mean(lifespan_numeric, na.rm = TRUE), 1),
+    success_rate = round(mean(lifespan_group == ">12 yrs") * 100, 1),
+    .groups = "drop"
+  ) %>% print()
+
+# Competition summary in modeling sample
+cat("\n\nCompetition in modeling sample:\n")
+df_features %>%
+  summarise(
+    n = n(),
+    mean_comp = round(mean(comp_300m, na.rm = TRUE), 1),
+    median_comp = median(comp_300m, na.rm = TRUE),
+    q75 = quantile(comp_300m, 0.75, na.rm = TRUE),
+    max_comp = max(comp_300m, na.rm = TRUE)
+  ) %>% print()
+
+
+# 8. SAVE OUTPUTS
+
+write_csv(df_features, "df_modeling_final.csv")
+write_csv(competition_metrics, "competition_300m_all.csv")
+write_csv(street_performance, "street_performance_all.csv")
+
+# Create street selection summary
+street_summary <- data.frame(
+  street_address = selected_streets,
+  category = case_when(
+    selected_streets %in% best_streets & selected_streets %in% worst_streets ~ "Both",
+    selected_streets %in% best_streets ~ "Best",
+    TRUE ~ "Worst"
+  )
+) %>%
+  left_join(street_performance, by = "street_address") %>%
+  arrange(desc(success_rate))
+
+write_csv(street_summary, "selected_streets_summary.csv")
+
+
+```
 
 
 
