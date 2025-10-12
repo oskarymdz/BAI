@@ -1542,7 +1542,7 @@ for (area in top_clue) {
 
 # Select final features
 final_features <- c(
-  "lifespan_numeric",
+  "lifespan_numeric","business_id",
   "industry_cafe", "log_seats", "outdoor_seating", "mixed_seating",
   "same_ind", "other_ind",
   "on_best_street", "on_worst_street",
@@ -1554,7 +1554,7 @@ df_final <- df_features %>%
   select(all_of(final_features))
 
 # Save
-write_csv(df_final, "df_clean_200m.csv")
+write_csv(df_final, "df_clean_200m_shinny.csv")
 
 # Summary
 summary_stats <- tibble(
@@ -1639,7 +1639,7 @@ importance_raw <- data.frame(
 )
 
 correlations <- df_best %>%
-  select(-lifespan_numeric) %>%
+  dplyr::select(-lifespan_numeric) %>%
   summarise(across(everything(), ~cor(., df_best$lifespan_numeric))) %>%
   pivot_longer(everything(), names_to = "feature", values_to = "correlation")
 
@@ -1671,7 +1671,7 @@ table2_importance <- importance_raw %>%
     )
   ) %>%
   head(10) %>%
-  select(
+  dplyr::select(
     Rank = rank,
     Feature = feature_clean,
     Importance = inc_mse,
@@ -1705,7 +1705,7 @@ table3_negative <- importance_raw %>%
     )
   ) %>%
   head(8) %>%
-  select(
+  dplyr::select(
     Feature = feature_clean,
     Importance = inc_mse,
     `Correlation with Lifespan` = correlation,
@@ -1739,7 +1739,7 @@ table4_positive <- importance_raw %>%
     )
   ) %>%
   head(8) %>%
-  select(
+  dplyr::select(
     Feature = feature_clean,
     Importance = inc_mse,
     `Correlation with Lifespan` = correlation,
@@ -1837,7 +1837,7 @@ invisible({
           Importance = round(inc_mse, 1),
           Correlation = sprintf("%+.3f", correlation)
         ) %>%
-        select(Rank, Feature = feature_clean, Importance, 
+        dplyr::select(Rank, Feature = feature_clean, Importance, 
                `Effect on Lifespan` = effect_direction, Correlation)
     ) %>%
     mutate(
@@ -1887,11 +1887,1630 @@ list(
   reliability = table6_reliability
 )
 
+
+ p1
+ p2
+```
+
+Model Performance Summary
+
+R² = 11.2% - Model explains 11.2% of lifespan variance using location and competition factors alone
+
+While 11% R² may seem modest, this is strong performance for business survival prediction using only observable site characteristics. The remaining 89% is explained by factors we cannot measure pre-opening (food quality, management, service, marketing
+
+
+Other-industry competition more harmful than same-industry,
+Melbourne CBD location (19% more important than alternatives),
+Larger restaurants (seats) show better survival in competitive markets,
+Poor quality streets + Docklands area show consistent negative effects,
+Prime location streets + Carlton area boost survival,
+Cafes outlive full-service restaurants,
+
+
+
+
+PRIORITY 1: CBD location (31.8 importance). Carlton: Solid alternative to CBD - stable positive effect
+PRIORITY 2: Low other-industry competition (<25 competitors)
+PRIORITY 3: Avoid worst streets (24.6 penalty)
+PRIORITY 4: Avoid multi-tenant properties if possible
+
+
+
+
+Avoid These Red Flags:
+
+Docklands area (consistently negative)
+Worst-performing streets (24.6 importance penalty)
+Multi-tenant properties with >3 food businesses
+
+
+
+
+
+#### Prepare Shinny app data
+
+```{r}
+
+
+library(tidyverse)
+library(sf)
+library(lubridate)
+
+
+# load data
+
+
+
+# Base dataset (current Shiny-ready data)
+df_base <- read_csv("df_ULTRA_enhanced_with_filters.csv")
+
+# Street statistics (from previous processing)
+df_streets <- read_csv("df_with_street_stats_ALL_STREETS.csv")
+
+# Modeling data with 200m competition (extract competition metrics only)
+df_model <- read_csv("df_clean_200m_shinny.csv")
+
+
+
+
+# Add foot trsffic data
+
+
+
+
+# Extract unique street info (one row per business)
+street_lookup <- df_streets %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  dplyr::select(
+    business_id,
+    street_address,
+    street_avg_lifespan,
+    street_success_rate,
+    street_median_seats,
+    total_businesses_on_street = total_businesses,
+    street_reliability = reliability
+  )
+
+# Merge with base
+df_enhanced <- df_base %>%
+  left_join(street_lookup, by = "business_id")
+
+cat("✓ Added street data -", 
+    sum(!is.na(df_enhanced$street_address)), "records have street addresses\n\n")
+
+
+# work out 50m competition
+
+
+
+
+# Get business entry points (first appearance year for each business)
+business_entries <- df_base %>%
+  group_by(business_id) %>%
+  arrange(census_year) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  dplyr::select(business_id, entry_year = census_year, industry, lat, lon) %>%
+  filter(!is.na(lat), !is.na(lon))
+
+# Convert to spatial object
+business_sf <- st_as_sf(
+  business_entries,
+  coords = c("lon", "lat"),
+  crs = 4326  # WGS84
+) %>% 
+  st_transform(28355)  # Transform to projected CRS (meters)
+
+# Calculate 50m competition
+radius_50m <- 50
+n <- nrow(business_sf)
+
+competition_50m <- data.frame(
+  business_id = business_sf$business_id,
+  entry_year = business_sf$entry_year,
+  industry = business_sf$industry,
+  competitors_50m = numeric(n),
+  same_industry_50m = numeric(n),
+  other_industry_50m = numeric(n)
+)
+
+# Create 50m buffers
+buffers_50m <- st_buffer(business_sf, dist = radius_50m)
+
+# Progress bar
+pb <- txtProgressBar(max = n, style = 3)
+
+for (i in 1:n) {
+  if (i %% 500 == 0) {
+    setTxtProgressBar(pb, i)
+    cat(sprintf(" [%d/%d - %.1f%%]\n", i, n, i/n*100))
+  }
+  
+  focal_year <- business_sf$entry_year[i]
+  focal_industry <- business_sf$industry[i]
+  
+  # Find businesses that existed at entry year
+  existing_mask <- business_sf$entry_year <= focal_year
+  
+  # Total competitors (exclude self)
+  overlaps_total <- st_intersects(buffers_50m[i,], business_sf[existing_mask,], sparse = FALSE)
+  competition_50m$competitors_50m[i] <- max(0, sum(overlaps_total) - 1)
+  
+  # Same industry competitors
+  same_mask <- existing_mask & business_sf$industry == focal_industry
+  overlaps_same <- st_intersects(buffers_50m[i,], business_sf[same_mask,], sparse = FALSE)
+  competition_50m$same_industry_50m[i] <- max(0, sum(overlaps_same) - 1)
+  
+  # Other industry competitors
+  other_mask <- existing_mask & business_sf$industry != focal_industry
+  overlaps_other <- st_intersects(buffers_50m[i,], business_sf[other_mask,], sparse = FALSE)
+  competition_50m$other_industry_50m[i] <- max(0, sum(overlaps_other))
+}
+
+close(pb)
+
+
+
+
+
+
+# Add 200m competition
+
+
+
+
+# Extract 200m competition (from modeling dataset)
+# Note: modeling data has one row per business (entry year only)
+competition_200m <- df_model %>%
+  dplyr::select(
+    business_id,
+    same_industry_200m = same_ind,
+    other_industry_200m = other_ind
+  ) %>%
+  mutate(competitors_200m = same_industry_200m + other_industry_200m)
+
+
+
+
+# Merge data
+
+# Merge 50m competition (matches by business_id for each census year)
+df_enhanced <- df_enhanced %>%
+  left_join(
+    competition_50m %>% dplyr::select(business_id, competitors_50m, same_industry_50m, other_industry_50m),
+    by = "business_id"
+  )
+
+# Merge 200m competition
+df_enhanced <- df_enhanced %>%
+  left_join(competition_200m, by = "business_id")
+
+
+
+
+# Add features for shinny app
+
+
+
+
+df_enhanced <- df_enhanced %>%
+  mutate(
+    # ---- Competition Categories (for filtering) ----
+    competition_50m_category = case_when(
+      is.na(competitors_50m) ~ "Unknown",
+      competitors_50m == 0 ~ "Isolated (0)",
+      competitors_50m <= 2 ~ "Very Low (1-2)",
+      competitors_50m <= 5 ~ "Low (3-5)",
+      competitors_50m <= 10 ~ "Medium (6-10)",
+      competitors_50m <= 20 ~ "High (11-20)",
+      TRUE ~ "Very High (>20)"
+    ),
+    
+    competition_200m_category = case_when(
+      is.na(competitors_200m) ~ "Unknown",
+      competitors_200m == 0 ~ "Isolated (0)",
+      competitors_200m <= 5 ~ "Very Low (1-5)",
+      competitors_200m <= 15 ~ "Low (6-15)",
+      competitors_200m <= 30 ~ "Medium (16-30)",
+      competitors_200m <= 50 ~ "High (31-50)",
+      TRUE ~ "Very High (>50)"
+    ),
+    
+    #  Competition Flags (binary) 
+    high_competition_50m = as.numeric(competitors_50m >= 10),
+    high_competition_200m = as.numeric(competitors_200m >= 30),
+    isolated_location = as.numeric(competitors_50m == 0 | competitors_200m <= 2),
+    
+    #  Street Quality Indicators 
+    # Calculate percentiles for street success rate
+    street_quality = case_when(
+      is.na(street_success_rate) ~ "Unknown",
+      street_success_rate >= quantile(street_success_rate, 0.8, na.rm = TRUE) ~ "Excellent (Top 20%)",
+      street_success_rate >= quantile(street_success_rate, 0.6, na.rm = TRUE) ~ "Good (60-80%)",
+      street_success_rate >= quantile(street_success_rate, 0.4, na.rm = TRUE) ~ "Average (40-60%)",
+      street_success_rate >= quantile(street_success_rate, 0.2, na.rm = TRUE) ~ "Below Average (20-40%)",
+      TRUE ~ "Poor (Bottom 20%)"
+    ),
+    
+    on_prime_street = as.numeric(
+      !is.na(street_success_rate) & 
+      street_success_rate >= quantile(street_success_rate, 0.8, na.rm = TRUE)
+    ),
+    
+    on_poor_street = as.numeric(
+      !is.na(street_success_rate) & 
+      street_success_rate <= quantile(street_success_rate, 0.2, na.rm = TRUE)
+    ),
+    
+    # Industry Competition Ratios 
+    industry_ratio_50m = case_when(
+      is.na(competitors_50m) | competitors_50m == 0 ~ NA_real_,
+      TRUE ~ same_industry_50m / competitors_50m
+    ),
+    
+    industry_ratio_200m = case_when(
+      is.na(competitors_200m) | competitors_200m == 0 ~ NA_real_,
+      TRUE ~ same_industry_200m / competitors_200m
+    ),
+    
+    # Size Categories (for analysis) 
+    size_category = case_when(
+      num_seats <= 30 ~ "Small (≤30)",
+      num_seats <= 60 ~ "Medium (31-60)",
+      num_seats <= 100 ~ "Large (61-100)",
+      TRUE ~ "Very Large (>100)"
+    ),
+    
+    # CBD Distance (approximate) 
+    # CBD center: 144.9631°E, 37.8136°S
+    dist_from_cbd_km = sqrt(
+      (lon - 144.9631)^2 + (lat - (-37.8136))^2
+    ) * 111,  # Rough conversion to km
+    
+    # Current Status (for 2023 snapshot) 
+    is_current_business = as.numeric(census_year == 2023),
+    
+    #  Risk Flags (based on modeling insights) 
+    high_risk_location = as.numeric(
+      (on_poor_street == 1) |
+      (clue_area == "Docklands") |
+      (other_industry_200m >= 25)
+    ),
+    
+    favorable_location = as.numeric(
+      (on_prime_street == 1) |
+      (clue_area %in% c("Melbourne (CBD)", "Carlton")) |
+      (other_industry_200m <= 15)
+    )
+  )
+
+
+
+
+# Work out street level data
+
+
+
+
+# Calculate current (2023) business counts per street
+current_street_stats <- df_enhanced %>%
+  filter(census_year == 2023, !is.na(street_address)) %>%
+  group_by(street_address, industry) %>%
+  summarise(
+    current_businesses_2023 = n(),
+    avg_seats_current = mean(num_seats, na.rm = TRUE),
+    median_competitors_50m = median(competitors_50m, na.rm = TRUE),
+    median_competitors_200m = median(competitors_200m, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Calculate historical performance per street
+historical_street_stats <- df_enhanced %>%
+  filter(bias_filter == FALSE) %>%  # Use only unbiased sample
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  filter(!is.na(street_address)) %>%
+  group_by(street_address, industry) %>%
+  summarise(
+    total_businesses_historical = n(),
+    avg_lifespan_historical = mean(lifespan_years, na.rm = TRUE),
+    median_lifespan_historical = median(lifespan_years, na.rm = TRUE),
+    success_rate_12yrs = mean(lifespan_group == ">12 yrs") * 100,
+    avg_seats_historical = mean(num_seats, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(total_businesses_historical >= 3)  # Only streets with 3+ historical businesses
+
+# Combine street statistics
+street_analysis_data <- historical_street_stats %>%
+  left_join(
+    current_street_stats,
+    by = c("street_address", "industry")
+  ) %>%
+  mutate(
+    # Add CLUE area for comparison (use most common clue_area for this street)
+    clue_area = df_enhanced %>%
+      filter(street_address == .$street_address[1]) %>%
+      count(clue_area, sort = TRUE) %>%
+      slice_head(n = 1) %>%
+      pull(clue_area)
+  )
+
+# Add CLUE area benchmarks
+clue_benchmarks <- df_enhanced %>%
+  filter(bias_filter == FALSE) %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  group_by(clue_area, industry) %>%
+  summarise(
+    clue_avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    clue_success_rate = mean(lifespan_group == ">12 yrs") * 100,
+    .groups = "drop"
+  )
+
+street_analysis_data <- street_analysis_data %>%
+  left_join(clue_benchmarks, by = c("industry")) %>%
+  mutate(
+    vs_area_benchmark = avg_lifespan_historical - clue_avg_lifespan,
+    better_than_area = vs_area_benchmark > 0
+  )
+
+
+
+
+
+
+
+
+
+
+# Save
+
+# Main enhanced dataset (for Shiny app)
+write_csv(df_enhanced, "df_ULTRA_enhanced_with_competition.csv")
+
+
+# Street analysis lookup (for Street Analysis Tool)
+write_csv(street_analysis_data, "street_analysis_lookup.csv")
+
+
+# Competition metrics summary (for documentation)
+competition_summary <- df_enhanced %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  filter(!is.na(competitors_200m)) %>%
+  summarise(
+    total_businesses = n(),
+    mean_comp_50m = round(mean(competitors_50m, na.rm = TRUE), 1),
+    median_comp_50m = median(competitors_50m, na.rm = TRUE),
+    mean_comp_200m = round(mean(competitors_200m, na.rm = TRUE), 1),
+    median_comp_200m = median(competitors_200m, na.rm = TRUE),
+    pct_high_comp = round(mean(high_competition_200m, na.rm = TRUE) * 100, 1),
+    pct_isolated = round(mean(isolated_location, na.rm = TRUE) * 100, 1)
+  )
+
+write_csv(competition_summary, "competition_metrics_summary.csv")
+
+
+
+```
+
+
+
+```{r}
+
+
+library(tidyverse)
+library(sf)
+
+
+
+# Revise 200m competition
+
+
+
+# Load current data
+df_current <- read_csv("df_ULTRA_enhanced_with_competition.csv", show_col_types = FALSE)
+
+# Remove old incomplete 200m columns
+df_fixed <- df_current %>%
+  dplyr::select(-competitors_200m, -same_industry_200m, -other_industry_200m, 
+         -competition_200m_category, -high_competition_200m, -industry_ratio_200m)
+
+
+
+# Get business entry points (ALL businesses with coordinates)
+business_entries <- df_fixed %>%
+  group_by(business_id) %>%
+  arrange(census_year) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  dplyr::select(business_id, entry_year = census_year, industry, lat, lon) %>%
+  filter(!is.na(lat), !is.na(lon))
+
+
+
+# Convert to spatial object
+business_sf <- st_as_sf(
+  business_entries,
+  coords = c("lon", "lat"),
+  crs = 4326
+) %>% 
+  st_transform(28355)
+
+# Calculate 200m competition
+radius_200m <- 200
+n <- nrow(business_sf)
+
+
+
+competition_200m_new <- data.frame(
+  business_id = business_sf$business_id,
+  entry_year = business_sf$entry_year,
+  industry = business_sf$industry,
+  competitors_200m = numeric(n),
+  same_industry_200m = numeric(n),
+  other_industry_200m = numeric(n)
+)
+
+# Create 200m buffers
+buffers_200m <- st_buffer(business_sf, dist = radius_200m)
+
+# Progress tracking
+pb <- txtProgressBar(max = n, style = 3)
+start_time <- Sys.time()
+
+for (i in 1:n) {
+  if (i %% 500 == 0) {
+    elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
+    pct_complete <- i/n
+    est_total <- elapsed / pct_complete
+    est_remaining <- est_total - elapsed
+    
+    setTxtProgressBar(pb, i)
+    cat(sprintf("\n[%d/%d - %.1f%%] Elapsed: %.1f min | Est. remaining: %.1f min\n", 
+                i, n, pct_complete*100, elapsed, est_remaining))
+  }
+  
+  focal_year <- business_sf$entry_year[i]
+  focal_industry <- business_sf$industry[i]
+  
+  # Find businesses that existed at entry year
+  existing_mask <- business_sf$entry_year <= focal_year
+  
+  # Total competitors (exclude self)
+  overlaps_total <- st_intersects(buffers_200m[i,], business_sf[existing_mask,], sparse = FALSE)
+  competition_200m_new$competitors_200m[i] <- max(0, sum(overlaps_total) - 1)
+  
+  # Same industry competitors
+  same_mask <- existing_mask & business_sf$industry == focal_industry
+  overlaps_same <- st_intersects(buffers_200m[i,], business_sf[same_mask,], sparse = FALSE)
+  competition_200m_new$same_industry_200m[i] <- max(0, sum(overlaps_same) - 1)
+  
+  # Other industry competitors
+  other_mask <- existing_mask & business_sf$industry != focal_industry
+  overlaps_other <- st_intersects(buffers_200m[i,], business_sf[other_mask,], sparse = FALSE)
+  competition_200m_new$other_industry_200m[i] <- max(0, sum(overlaps_other))
+}
+
+close(pb)
+
+total_time <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
+cat(sprintf("\n✓ 200m competition calculated in %.1f minutes\n\n", total_time))
+
+
+
+
+# Merge data
+
+
+
+# Merge with main dataset
+df_fixed <- df_fixed %>%
+  left_join(
+    competition_200m_new %>% dplyr::select(business_id, competitors_200m, same_industry_200m, other_industry_200m),
+    by = "business_id"
+  )
+
+
+
+# Recalculate 200m derived features
+df_fixed <- df_fixed %>%
+  mutate(
+    # 200m competition category
+    competition_200m_category = case_when(
+      is.na(competitors_200m) ~ "Unknown",
+      competitors_200m == 0 ~ "Isolated (0)",
+      competitors_200m <= 5 ~ "Very Low (1-5)",
+      competitors_200m <= 15 ~ "Low (6-15)",
+      competitors_200m <= 30 ~ "Medium (16-30)",
+      competitors_200m <= 50 ~ "High (31-50)",
+      TRUE ~ "Very High (>50)"
+    ),
+    
+    # High competition flag
+    high_competition_200m = as.numeric(competitors_200m >= 30),
+    
+    # Industry ratio
+    industry_ratio_200m = case_when(
+      is.na(competitors_200m) | competitors_200m == 0 ~ NA_real_,
+      TRUE ~ same_industry_200m / competitors_200m
+    ),
+    
+    # Update high risk location (now with complete 200m data)
+    high_risk_location = as.numeric(
+      (on_poor_street == 1) |
+      (clue_area == "Docklands") |
+      (!is.na(other_industry_200m) & other_industry_200m >= 25)
+    ),
+    
+    # Update favorable location
+    favorable_location = as.numeric(
+      (on_prime_street == 1) |
+      (clue_area %in% c("Melbourne (CBD)", "Carlton")) |
+      (!is.na(other_industry_200m) & other_industry_200m <= 15)
+    )
+  )
+
+
+
+# Validation check
+cat("Validation - 200m data coverage:\n")
+business_check <- df_fixed %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  summarise(
+    total = n(),
+    has_50m = sum(!is.na(competitors_50m)),
+    has_200m = sum(!is.na(competitors_200m)),
+    has_both = sum(!is.na(competitors_50m) & !is.na(competitors_200m))
+  )
+
+print(business_check)
+
+
+
+
+
+# FIX STREET ANALYSIS LOOKUP
+
+
+
+
+# Load and fix street lookup
+street_lookup_old <- read_csv("street_analysis_lookup.csv", show_col_types = FALSE)
+
+
+
+
+
+# Fix: Use clue_area.x (from historical data join) as primary
+street_lookup_fixed <- street_lookup_old %>%
+  mutate(
+    # Prefer clue_area.x, fallback to clue_area.y if missing
+    clue_area = coalesce(clue_area.x, clue_area.y)
+  ) %>%
+  dplyr::select(-clue_area.x, -clue_area.y) %>%
+  # Reorder columns logically
+  dplyr::select(
+    street_address, 
+    industry,
+    clue_area,
+    # Historical metrics
+    total_businesses_historical,
+    avg_lifespan_historical,
+    median_lifespan_historical,
+    success_rate_12yrs,
+    avg_seats_historical,
+    # Current metrics
+    current_businesses_2023,
+    avg_seats_current,
+    median_competitors_50m,
+    median_competitors_200m,
+    # Benchmark comparison
+    clue_avg_lifespan,
+    clue_success_rate,
+    vs_area_benchmark,
+    better_than_area
+  )
+
+
+
+# Add additional street-level competition stats using new 200m data
+street_competition_stats <- df_fixed %>%
+  filter(census_year == 2023, !is.na(street_address)) %>%
+  group_by(street_address, industry) %>%
+  summarise(
+    mean_competitors_50m = round(mean(competitors_50m, na.rm = TRUE), 1),
+    mean_competitors_200m = round(mean(competitors_200m, na.rm = TRUE), 1),
+    pct_high_competition = round(mean(high_competition_200m, na.rm = TRUE) * 100, 1),
+    .groups = "drop"
+  )
+
+street_lookup_fixed <- street_lookup_fixed %>%
+  left_join(street_competition_stats, by = c("street_address", "industry"))
+
+
+# Save
+
+
+
+# Save fixed main dataset
+write_csv(df_fixed, "df_ULTRA_enhanced_with_competition_FIXED.csv")
+
+# Save fixed street lookup
+write_csv(street_lookup_fixed, "street_analysis_lookup_FIXED.csv")
+
+
+
+
+
+
+```
+
+
+#### Add foot traffic data
+
+```{r}
+
+
+library(tidyverse)
+library(sf)
+
+
+
+
+# Load business data
+df_business <- read_csv("df_ULTRA_enhanced_with_competition_FIXED.csv")
+
+# Load foot traffic data
+traffic_overview <- read_csv("overview_sensor_traffic.csv")
+traffic_yearly <- read_csv("yearly_sensor_traffic.csv")
+
+
+
+# Find Nearest Sensor for Each Business
+
+# Convert to spatial objects
+business_sf <- df_business %>%
+  filter(!is.na(lat), !is.na(lon)) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+  st_transform(28355)  # Melbourne projection
+
+sensors_sf <- traffic_overview %>%
+  filter(!is.na(lat), !is.na(lon)) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+  st_transform(28355)
+
+
+
+# Find nearest sensor within 200m (sensors beyond this are not representative)
+nearest_sensor <- st_nearest_feature(business_sf, sensors_sf)
+distances <- st_distance(business_sf, sensors_sf[nearest_sensor,], by_element = TRUE)
+
+# Add sensor info to business data
+df_with_traffic <- df_business %>%
+  filter(!is.na(lat), !is.na(lon)) %>%
+  mutate(
+    row_id = row_number(),
+    nearest_sensor_id = traffic_overview$Location_ID[nearest_sensor],
+    nearest_sensor_name = traffic_overview$Sensor_Name[nearest_sensor],
+    sensor_distance_m = as.numeric(distances),
+    avg_daily_foottraffic = traffic_overview$avg_daily_overall[nearest_sensor],
+    foottraffic_years_observed = traffic_overview$years_observed[nearest_sensor]
+  ) %>%
+  # Only keep sensor data if within 200m
+  mutate(
+    avg_daily_foottraffic = ifelse(sensor_distance_m <= 200, avg_daily_foottraffic, NA),
+    nearest_sensor_name = ifelse(sensor_distance_m <= 200, nearest_sensor_name, NA)
+  )
+
+# Merge back with businesses without coordinates
+df_final <- df_business %>%
+  left_join(
+    df_with_traffic %>% 
+      dplyr::select(property_id, business_id, census_year, 
+             nearest_sensor_id, nearest_sensor_name, sensor_distance_m, 
+             avg_daily_foottraffic, foottraffic_years_observed),
+    by = c("property_id", "business_id", "census_year")
+  )
+
+
+# CREATE FOOT TRAFFIC CATEGORIES
+
+
+df_final <- df_final %>%
+  mutate(
+    # Categorize foot traffic levels
+    foottraffic_category = case_when(
+      is.na(avg_daily_foottraffic) ~ "Unknown",
+      avg_daily_foottraffic < 1000 ~ "Very Low (<1k/day)",
+      avg_daily_foottraffic < 3000 ~ "Low (1-3k/day)",
+      avg_daily_foottraffic < 5000 ~ "Medium (3-5k/day)",
+      avg_daily_foottraffic < 8000 ~ "High (5-8k/day)",
+      TRUE ~ "Very High (>8k/day)"
+    ),
+    
+    # Create traffic density score (per 1000 people)
+    traffic_density_k = avg_daily_foottraffic / 1000,
+    
+    # Flag high-traffic locations (top 25%)
+    high_traffic_location = as.numeric(
+      !is.na(avg_daily_foottraffic) & 
+      avg_daily_foottraffic >= quantile(avg_daily_foottraffic, 0.75, na.rm = TRUE)
+    ),
+    
+    # Flag low-traffic locations (bottom 25%)
+    low_traffic_location = as.numeric(
+      !is.na(avg_daily_foottraffic) & 
+      avg_daily_foottraffic <= quantile(avg_daily_foottraffic, 0.25, na.rm = TRUE)
+    )
+  )
+
+
+# Analysis of foot traffic
+
+
+
+
+# Coverage statistics
+coverage_stats <- df_final %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  summarise(
+    total_businesses = n(),
+    with_traffic_data = sum(!is.na(avg_daily_foottraffic)),
+    pct_coverage = round(sum(!is.na(avg_daily_foottraffic)) / n() * 100, 1)
+  )
+
+cat("Coverage Statistics:\n")
+print(coverage_stats)
+cat("\n")
+
+# Traffic vs Survival Analysis
+traffic_survival <- df_final %>%
+  filter(!bias_filter, !is.na(avg_daily_foottraffic)) %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  mutate(
+    traffic_bin = cut(avg_daily_foottraffic, 
+                     breaks = c(0, 2000, 4000, 6000, 8000, 20000),
+                     labels = c("<2k", "2-4k", "4-6k", "6-8k", ">8k"))
+  ) %>%
+  group_by(traffic_bin) %>%
+  summarise(
+    n_businesses = n(),
+    avg_lifespan = round(mean(lifespan_years, na.rm = TRUE), 1),
+    median_lifespan = median(lifespan_years, na.rm = TRUE),
+    success_rate = round(mean(lifespan_group == ">12 yrs") * 100, 1),
+    avg_competition = round(mean(competitors_200m, na.rm = TRUE), 0),
+    .groups = "drop"
+  )
+
+
+
+# Golden Opportunities: High traffic + Low competition
+golden_spots <- df_final %>%
+  filter(
+    census_year == 2023,
+    !is.na(avg_daily_foottraffic),
+    !is.na(competitors_200m)
+  ) %>%
+  mutate(
+    opportunity_score = (avg_daily_foottraffic / 1000) / (competitors_200m + 1)
+  ) %>%
+  group_by(street_address) %>%
+  summarise(
+    n_current = n(),
+    avg_foottraffic = round(mean(avg_daily_foottraffic), 0),
+    avg_competition = round(mean(competitors_200m), 0),
+    avg_opportunity_score = round(mean(opportunity_score), 2),
+    clue_area = first(clue_area),
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(street_address), n_current >= 1) %>%
+  arrange(desc(avg_opportunity_score)) %>%
+  head(20)
+
+
+
+
+# UPDATE street level analysis
+
+
+street_traffic <- df_final %>%
+  filter(census_year == 2023, !is.na(street_address), !is.na(avg_daily_foottraffic)) %>%
+  group_by(street_address, industry) %>%
+  summarise(
+    avg_foottraffic = round(mean(avg_daily_foottraffic), 0),
+    median_foottraffic = median(avg_daily_foottraffic),
+    .groups = "drop"
+  )
+
+# Load and update street lookup
+street_lookup <- read_csv("street_analysis_lookup_FIXED.csv")
+
+street_lookup_enhanced <- street_lookup %>%
+  left_join(street_traffic, by = c("street_address", "industry"))
+
+
+# Save
+write_csv(df_final, "df_ULTRA_enhanced_with_traffic.csv")
+write_csv(street_lookup_enhanced, "street_analysis_lookup_with_traffic.csv")
+write_csv(golden_spots, "golden_opportunity_streets.csv")
+
+
+
+
+# CORRELATION ANALYSIS
+
+
+
+
+# Correlation: Foot traffic vs Lifespan
+business_level <- df_final %>%
+  filter(!bias_filter, !is.na(avg_daily_foottraffic)) %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+if (nrow(business_level) > 0) {
+  cor_traffic_lifespan <- cor(business_level$avg_daily_foottraffic, 
+                               business_level$lifespan_years, 
+                               use = "complete.obs")
+  
+  cor_traffic_success <- cor(business_level$avg_daily_foottraffic, 
+                             as.numeric(business_level$lifespan_group == ">12 yrs"), 
+                             use = "complete.obs")
+  
+  cat("Correlation: Foot Traffic vs Lifespan:", round(cor_traffic_lifespan, 3), "\n")
+  cat("Correlation: Foot Traffic vs Success (>12y):", round(cor_traffic_success, 3), "\n\n")
+}
+
+# Sweet spot analysis
+sweet_spot <- traffic_survival %>%
+  filter(!is.na(success_rate)) %>%
+  arrange(desc(success_rate)) %>%
+  slice_head(n = 1)
+
+cat("SWEET SPOT for Foot Traffic:\n")
+cat("  Range:", sweet_spot$traffic_bin, "daily pedestrians\n")
+cat("  Success Rate:", sweet_spot$success_rate, "%\n")
+cat("  Avg Lifespan:", sweet_spot$avg_lifespan, "years\n")
+cat("  Avg Competition:", sweet_spot$avg_competition, "competitors\n\n")
+
+cat("═══════════════════════════════════════════════════════════════════════\n")
+cat("INTEGRATION COMPLETE - Ready for enhanced Shiny app!\n")
+cat("═══════════════════════════════════════════════════════════════════════\n")
 ```
 
 
 
 
+```{r}
+
+
+library(tidyverse)
+library(patchwork)
+library(scales)
+
+# Load data (already filtered correctly)
+df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+
+df_analysis <- df_full %>%
+  filter(!bias_filter) %>%  # ✓ Correct: Completed lifecycles only
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+df_traffic <- df_analysis %>% filter(!is.na(avg_daily_foottraffic))
+
+# Calculate stats
+cor_same <- cor(df_analysis$same_industry_200m, df_analysis$lifespan_years)
+cor_other <- cor(df_analysis$other_industry_200m, df_analysis$lifespan_years)
+cor_size <- cor(df_analysis$num_seats, df_analysis$lifespan_years)
+cor_traffic <- cor(df_traffic$avg_daily_foottraffic, df_traffic$lifespan_years)
+
+lm_same <- lm(lifespan_years ~ same_industry_200m, data = df_analysis)
+lm_other <- lm(lifespan_years ~ other_industry_200m, data = df_analysis)
+lm_size <- lm(lifespan_years ~ num_seats, data = df_analysis)
+lm_traffic <- lm(lifespan_years ~ avg_daily_foottraffic, data = df_traffic)
+
+# Panel A: Same-Industry (Linear - confirmed)
+p_same <- ggplot(df_analysis, aes(x = same_industry_200m, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#3498db") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  annotate("text", x = 5, y = 21,
+           label = paste0("r = ", round(cor_same, 3), 
+                         "\nR² = ", round(summary(lm_same)$r.squared, 4),
+                         "\n✓ Linear relationship"),
+           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
+  labs(title = "A. Same-Industry Competition",
+       subtitle = "Clear negative relationship → Keep in model",
+       x = "Competitors (200m)", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#27ae60"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel B: Other-Industry (Linear for comparison, but has non-linearity)
+p_other <- ggplot(df_analysis, aes(x = other_industry_200m, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#1abc9c") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  annotate("text", x = 5, y = 21,
+           label = paste0("r = ", round(cor_other, 3), 
+                         "\nR² = ", round(summary(lm_other)$r.squared, 4),
+                         "\n✓ Moderate non-linearity*"),
+           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
+  labs(title = "B. Other-Industry Competition",
+       subtitle = "Strong negative relationship → Keep in model",
+       x = "Competitors (200m)", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#27ae60"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel C: Restaurant Size (Linear shown, but non-linear exists)
+p_size <- ggplot(df_analysis, aes(x = num_seats, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#f39c12") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  annotate("text", x = 50, y = 21,
+           label = paste0("r = ", round(cor_size, 3), 
+                         "\nR² = ", round(summary(lm_size)$r.squared, 4),
+                         "\n⚠ Non-linear pattern**"),
+           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
+  labs(title = "C. Restaurant Size",
+       subtitle = "Modest relationship (non-linear) → Keep in model",
+       x = "Seats", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#f39c12"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel D: Foot Traffic (Linear, but doesn't matter - excluding)
+p_traffic <- ggplot(df_traffic, aes(x = avg_daily_foottraffic, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#95a5a6") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  annotate("text", x = 2000, y = 21,
+           label = paste0("r = ", round(cor_traffic, 3), 
+                         "\nR² = ", round(summary(lm_traffic)$r.squared, 4),
+                         "\n✗ No relationship"),
+           hjust = 0, vjust = 1, size = 3.5, fontface = "bold", color = "#e74c3c") +
+  scale_x_continuous(labels = comma) +
+  labs(title = "D. Foot Traffic (Pedestrian Count)",
+       subtitle = "No meaningful relationship → EXCLUDED from model",
+       x = "Pedestrians/day", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#e74c3c"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Combine
+p_final <- (p_same + p_other) / (p_size + p_traffic) +
+  plot_annotation(
+    title = "Feature Selection: Comparing Predictive Power",
+    subtitle = paste0("Analysis of ", nrow(df_analysis), 
+                     " completed restaurants (unbiased sample) | Linear correlations for comparison"),
+    caption = paste0(
+      "* Other-Industry shows non-linearity (RESET p < 0.001, GAM improves R² by 1.8pp)\n",
+      "** Restaurant Size has inverted-U pattern (optimal: 50-100 seats; RESET p < 0.001, GAM improves R² by 1.6pp)\n",
+      "Sample includes only businesses with completed lifecycles (!bias_filter) | One observation per business"
+    ),
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 18),
+      plot.subtitle = element_text(size = 12, color = "gray30"),
+      plot.caption = element_text(size = 8, color = "gray50", hjust = 0, lineheight = 1.2)
+    )
+  )
+
+ggsave("feature_comparison_4panel_FINAL.png", p_final,
+       width = 16, height = 12, dpi = 300, bg = "white")
+
+
+
+p_final
+```
+
+
+
+
+```{r}
+
+
+library(tidyverse)
+library(cluster)      
+library(factoextra)   
+library(ggdendro)     
+library(patchwork)    
+library(scales)
+
+
+
+# Load data
+df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+
+df_analysis <- df_full %>%
+  filter(!bias_filter) %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+
+# CLUE AREA CLUSTERING
+
+
+
+# Aggregate metrics by area
+area_metrics <- df_analysis %>%
+  group_by(clue_area) %>%
+  summarise(
+    # Sample size
+    n_businesses = n(),
+    
+    # Survival metrics
+    mean_lifespan = mean(lifespan_years),
+    median_lifespan = median(lifespan_years),
+    success_rate = mean(lifespan_group == ">12 yrs") * 100,
+    
+    # Competition metrics
+    mean_same_ind = mean(same_industry_200m, na.rm = TRUE),
+    mean_other_ind = mean(other_industry_200m, na.rm = TRUE),
+    mean_total_comp = mean(competitors_200m, na.rm = TRUE),
+    
+    # Business characteristics
+    mean_seats = mean(num_seats, na.rm = TRUE),
+    pct_cafe = mean(industry == "Cafes") * 100,
+    pct_outdoor = mean(str_detect(seating_type, "Outdoor")) * 100,
+    
+    # Variability
+    sd_lifespan = sd(lifespan_years),
+    
+    .groups = "drop"
+  ) %>%
+  filter(n_businesses >= 20)  # Only areas with sufficient data
+
+
+
+# Prepare clustering features (standardized)
+area_features <- area_metrics %>%
+  dplyr::select(
+    mean_lifespan,
+    success_rate,
+    mean_total_comp,
+    mean_seats,
+    sd_lifespan
+  ) %>%
+  scale() %>%
+  as.data.frame()
+
+rownames(area_features) <- area_metrics$clue_area
+
+
+# Determine optimal number of clusters
+
+
+
+
+# Elbow method
+set.seed(42)
+wss <- sapply(2:8, function(k) {
+  kmeans(area_features, centers = k, nstart = 25)$tot.withinss
+})
+
+# Silhouette method
+sil_widths <- sapply(2:8, function(k) {
+  km <- kmeans(area_features, centers = k, nstart = 25)
+  ss <- silhouette(km$cluster, dist(area_features))
+  mean(ss[, 3])
+})
+
+# Find optimal
+optimal_k <- which.max(sil_widths) + 1
+cat("Optimal clusters (silhouette method):", optimal_k, "\n\n")
+
+# Create elbow + silhouette plots
+p_elbow <- data.frame(k = 2:8, wss = wss) %>%
+  ggplot(aes(x = k, y = wss)) +
+  geom_line(color = "#3498db", size = 1.2) +
+  geom_point(color = "#3498db", size = 3) +
+  geom_vline(xintercept = optimal_k, linetype = "dashed", color = "red") +
+  labs(title = "Elbow Method", x = "Number of Clusters", y = "Within-cluster SS") +
+  theme_minimal(base_size = 11)
+
+p_silhouette <- data.frame(k = 2:8, silhouette = sil_widths) %>%
+  ggplot(aes(x = k, y = silhouette)) +
+  geom_line(color = "#2ecc71", size = 1.2) +
+  geom_point(color = "#2ecc71", size = 3) +
+  geom_vline(xintercept = optimal_k, linetype = "dashed", color = "red") +
+  labs(title = "Silhouette Analysis", x = "Number of Clusters", 
+       y = "Average Silhouette Width") +
+  theme_minimal(base_size = 11)
+
+# Perform clustering
+
+
+cat("Performing k-means clustering with k =", optimal_k, "\n")
+
+set.seed(42)
+km_areas <- kmeans(area_features, centers = optimal_k, nstart = 50)
+
+# Add cluster assignments
+area_metrics$cluster <- km_areas$cluster
+
+# Order clusters by performance (best = 1, worst = highest number)
+cluster_performance <- area_metrics %>%
+  group_by(cluster) %>%
+  summarise(avg_success = mean(success_rate), .groups = "drop") %>%
+  arrange(desc(avg_success)) %>%
+  mutate(rank = row_number())
+
+area_metrics <- area_metrics %>%
+  left_join(cluster_performance %>% dplyr::select(cluster, rank), by = "cluster") %>%
+  mutate(cluster_ordered = rank) %>%
+  dplyr::select(-rank)
+
+# Assign tier names
+tier_names <- c("Tier 1: Prime Locations", "Tier 2: Solid Locations", 
+                "Tier 3: Moderate Locations", "Tier 4: Challenging Locations")
+tier_names <- tier_names[1:optimal_k]
+
+area_metrics <- area_metrics %>%
+  mutate(tier = tier_names[cluster_ordered])
+
+# Cluster Profiles
+
+
+cluster_summary <- area_metrics %>%
+  group_by(tier, cluster_ordered) %>%
+  summarise(
+    n_areas = n(),
+    n_businesses = sum(n_businesses),
+    avg_lifespan = round(mean(mean_lifespan), 1),
+    avg_success_rate = round(mean(success_rate), 1),
+    avg_competition = round(mean(mean_total_comp), 0),
+    areas = paste(clue_area, collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  arrange(cluster_ordered)
+
+print(cluster_summary)
+cat("\n")
+
+
+
+
+
+# Visualizations
+
+
+# PCA for 2D visualization
+pca_result <- prcomp(area_features)
+pca_data <- as.data.frame(pca_result$x[, 1:2])
+pca_data$cluster <- factor(area_metrics$cluster_ordered)
+pca_data$tier <- area_metrics$tier
+pca_data$area <- area_metrics$clue_area
+pca_data$success_rate <- area_metrics$success_rate
+
+var_explained <- summary(pca_result)$importance[2, 1:2] * 100
+
+p_pca <- ggplot(pca_data, aes(x = PC1, y = PC2, color = tier, size = success_rate)) +
+  geom_point(alpha = 0.7) +
+  geom_text(aes(label = area), size = 2.5, hjust = 0, vjust = 0, 
+            nudge_x = 0.1, nudge_y = 0.1, check_overlap = TRUE) +
+  scale_color_brewer(palette = "Set1") +
+  scale_size_continuous(range = c(3, 10)) +
+  labs(
+    title = "CLUE Area Clustering (PCA Visualization)",
+    subtitle = "Size = Success Rate | Color = Performance Tier",
+    x = paste0("PC1 (", round(var_explained[1], 1), "% variance)"),
+    y = paste0("PC2 (", round(var_explained[2], 1), "% variance)"),
+    color = "Tier",
+    size = "Success Rate (%)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "right")
+
+# Hierarchical clustering dendrogram
+dist_matrix <- dist(area_features)
+hc <- hclust(dist_matrix, method = "ward.D2")
+
+dend_data <- dendro_data(hc)
+dend_data$labels$label <- area_metrics$clue_area[as.numeric(dend_data$labels$label)]
+dend_data$labels$tier <- area_metrics$tier[as.numeric(dend_data$labels$label)]
+
+p_dendrogram <- ggplot(segment(dend_data)) +
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(data = label(dend_data), 
+            aes(x = x, y = y, label = label, color = tier),
+            hjust = 1, angle = 90, size = 3) +
+  geom_hline(yintercept = hc$height[length(hc$height) - optimal_k + 2], 
+             linetype = "dashed", color = "red", size = 1) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "Hierarchical Clustering: CLUE Areas",
+    subtitle = paste("Dendrogram with", optimal_k, "clusters (red line)"),
+    x = NULL,
+    y = "Distance"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+# Heatmap of cluster characteristics
+cluster_means <- area_metrics %>%
+  group_by(tier) %>%
+  summarise(
+    `Mean Lifespan` = mean(mean_lifespan),
+    `Success Rate (%)` = mean(success_rate),
+    `Competition` = mean(mean_total_comp),
+    `Restaurant Size` = mean(mean_seats),
+    `Lifespan Variability` = mean(sd_lifespan),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-tier, names_to = "Metric", values_to = "Value") %>%
+  group_by(Metric) %>%
+  mutate(Value_scaled = scale(Value)[,1]) %>%
+  ungroup()
+
+p_heatmap <- ggplot(cluster_means, aes(x = tier, y = Metric, fill = Value_scaled)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = round(Value, 1)), size = 3, fontface = "bold") +
+  scale_fill_gradient2(low = "#e74c3c", mid = "white", high = "#27ae60",
+                       midpoint = 0, name = "Standardized\nValue") +
+  labs(
+    title = "Cluster Characteristics Heatmap",
+    subtitle = "Numbers show actual values | Colors show relative performance",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    panel.grid = element_blank()
+  )
+
+
+
+#  STREET-LEVEL CLUSTERING 
+
+
+
+
+# Aggregate metrics by street - CREATE UNIQUE ID
+street_metrics <- df_analysis %>%
+  group_by(street_address, clue_area) %>%
+  summarise(
+    # Sample size
+    n_businesses = n(),
+    
+    # Historical performance
+    mean_lifespan = mean(lifespan_years),
+    median_lifespan = median(lifespan_years),
+    success_rate = mean(lifespan_group == ">12 yrs") * 100,
+    
+    # Competition
+    mean_same_ind = mean(same_industry_200m, na.rm = TRUE),
+    mean_other_ind = mean(other_industry_200m, na.rm = TRUE),
+    mean_competition = mean(competitors_200m, na.rm = TRUE),
+    
+    # Business characteristics
+    mean_seats = mean(num_seats, na.rm = TRUE),
+    pct_cafe = mean(industry == "Cafes") * 100,
+    pct_outdoor = mean(str_detect(seating_type, "Outdoor"), na.rm = TRUE) * 100,
+    
+    # Variability
+    sd_lifespan = sd(lifespan_years),
+    
+    .groups = "drop"
+  ) %>%
+  filter(n_businesses >= 5) %>%  # Only streets with sufficient history
+  mutate(
+    # CREATE UNIQUE ID: street_area combination
+    street_id = paste0(street_address, " (", clue_area, ")")
+  )
+
+
+
+# Prepare clustering features (standardized)
+street_features <- street_metrics %>%
+  dplyr::select(
+    mean_lifespan,
+    success_rate,
+    mean_competition
+  ) %>%
+  scale() %>%
+  as.data.frame()
+
+# Use unique street_id as row names
+rownames(street_features) <- street_metrics$street_id
+
+
+# Determine optimal clusters
+
+
+
+
+set.seed(42)
+street_sil <- sapply(2:6, function(k) {
+  km <- kmeans(street_features, centers = k, nstart = 25)
+  ss <- silhouette(km$cluster, dist(street_features))
+  mean(ss[, 3])
+})
+
+optimal_k_street <- which.max(street_sil) + 1
+cat("Optimal clusters:", optimal_k_street, "\n\n")
+
+# Perform clustering
+
+
+
+
+set.seed(42)
+km_streets <- kmeans(street_features, centers = optimal_k_street, nstart = 50)
+
+street_metrics$cluster <- km_streets$cluster
+
+# Order clusters by performance
+street_cluster_perf <- street_metrics %>%
+  group_by(cluster) %>%
+  summarise(avg_success = mean(success_rate), .groups = "drop") %>%
+  arrange(desc(avg_success)) %>%
+  mutate(rank = row_number())
+
+street_metrics <- street_metrics %>%
+  left_join(street_cluster_perf %>% dplyr::select(cluster, rank), by = "cluster") %>%
+  mutate(cluster_ordered = rank) %>%
+  dplyr::select(-rank)
+
+# Assign tier names
+street_tier_names <- c("Gold Streets", "Silver Streets", "Bronze Streets", 
+                       "Copper Streets", "Avoid Streets")
+street_tier_names <- street_tier_names[1:optimal_k_street]
+
+street_metrics <- street_metrics %>%
+  mutate(street_tier = street_tier_names[cluster_ordered])
+
+
+# Street Cluster Profiles
+
+
+
+
+street_cluster_summary <- street_metrics %>%
+  group_by(street_tier, cluster_ordered) %>%
+  summarise(
+    n_streets = n(),
+    n_businesses = sum(n_businesses),
+    avg_lifespan = round(mean(mean_lifespan), 1),
+    avg_success_rate = round(mean(success_rate), 1),
+    avg_competition = round(mean(mean_competition), 0),
+    .groups = "drop"
+  ) %>%
+  arrange(cluster_ordered)
+
+print(street_cluster_summary)
+cat("\n")
+
+# Top 10 streets per tier
+for (i in 1:optimal_k_street) {
+  tier_streets <- street_metrics %>%
+    filter(cluster_ordered == i) %>%
+    arrange(desc(success_rate)) %>%
+    head(10)
+  
+  cat(street_tier_names[i], "\n")
+  cat(strrep("─", 70), "\n")
+  cat("Characteristics:\n")
+  cat("  Avg lifespan:", round(mean(tier_streets$mean_lifespan), 1), "years\n")
+  cat("  Avg success rate:", round(mean(tier_streets$success_rate), 1), "%\n")
+  cat("  Avg competition:", round(mean(tier_streets$mean_competition), 0), "\n\n")
+  cat("Top 10 streets:\n")
+  for (j in 1:min(10, nrow(tier_streets))) {
+    cat(sprintf("  %2d. %-50s - %.1f yrs, %.0f%% success\n",
+                j, tier_streets$street_id[j],
+                tier_streets$mean_lifespan[j], tier_streets$success_rate[j]))
+  }
+  cat("\n")
+}
+
+
+# Street Visualizations
+
+# Scatter plot: Success Rate vs Competition
+p_street_scatter <- ggplot(street_metrics, 
+                           aes(x = mean_competition, y = success_rate, 
+                               color = street_tier, size = n_businesses)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(
+    values = c("Gold Streets" = "#FFD700", 
+               "Silver Streets" = "#C0C0C0", 
+               "Bronze Streets" = "#CD7F32", 
+               "Copper Streets" = "#B87333", 
+               "Avoid Streets" = "#8B0000")
+  ) +
+  scale_size_continuous(range = c(1, 8)) +
+  labs(
+    title = "Street Performance: Success Rate vs Competition",
+    subtitle = "Size = Number of businesses | Color = Performance tier",
+    x = "Average Competition (200m radius)",
+    y = "Success Rate (%)",
+    color = "Street Tier",
+    size = "Businesses"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "right")
+
+# Distribution of streets across tiers
+p_street_dist <- street_metrics %>%
+  ggplot(aes(x = fct_reorder(street_tier, cluster_ordered), fill = street_tier)) +
+  geom_bar(alpha = 0.8) +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5, fontface = "bold") +
+  scale_fill_manual(
+    values = c("Gold Streets" = "#FFD700", 
+               "Silver Streets" = "#C0C0C0", 
+               "Bronze Streets" = "#CD7F32", 
+               "Copper Streets" = "#B87333", 
+               "Avoid Streets" = "#8B0000")
+  ) +
+  labs(
+    title = "Distribution of Streets Across Performance Tiers",
+    x = NULL,
+    y = "Number of Streets"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Box plot: Lifespan distribution by tier
+p_street_boxplot <- ggplot(street_metrics, 
+                            aes(x = fct_reorder(street_tier, cluster_ordered), 
+                                y = mean_lifespan, fill = street_tier)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  geom_jitter(width = 0.2, alpha = 0.2, size = 1) +
+  scale_fill_manual(
+    values = c("Gold Streets" = "#FFD700", 
+               "Silver Streets" = "#C0C0C0", 
+               "Bronze Streets" = "#CD7F32", 
+               "Copper Streets" = "#B87333", 
+               "Avoid Streets" = "#8B0000")
+  ) +
+  labs(
+    title = "Lifespan Distribution by Street Tier",
+    x = NULL,
+    y = "Mean Lifespan (years)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Heatmap: Top 20 streets by tier
+top_streets <- street_metrics %>%
+  group_by(street_tier) %>%
+  arrange(desc(success_rate)) %>%
+  slice_head(n = 4) %>%
+  ungroup() %>%
+  arrange(cluster_ordered, desc(success_rate))
+
+p_street_heatmap <- top_streets %>%
+  dplyr::select(street_id, street_tier, mean_lifespan, success_rate, mean_competition) %>%
+  pivot_longer(cols = c(mean_lifespan, success_rate, mean_competition),
+               names_to = "metric", values_to = "value") %>%
+  mutate(
+    metric = case_when(
+      metric == "mean_lifespan" ~ "Avg Lifespan (yrs)",
+      metric == "success_rate" ~ "Success Rate (%)",
+      metric == "mean_competition" ~ "Competition"
+    )
+  ) %>%
+  group_by(metric) %>%
+  mutate(value_scaled = scale(value)[,1]) %>%
+  ungroup() %>%
+  ggplot(aes(x = metric, y = fct_reorder(street_id, as.numeric(factor(street_tier))), 
+             fill = value_scaled)) +
+  geom_tile(color = "white", size = 0.5) +
+  geom_text(aes(label = round(value, 1)), size = 2.5) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "white", high = "#27ae60",
+                       midpoint = 0, name = "Standardized\nValue") +
+  facet_grid(street_tier ~ ., scales = "free_y", space = "free_y") +
+  labs(
+    title = "Top Streets by Tier: Performance Metrics",
+    subtitle = "Top 4 streets from each tier",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    strip.text = element_text(face = "bold"),
+    panel.grid = element_blank()
+  )
+
+
+# Save street plots
+
+
+p_street_combined <- (p_street_scatter | p_street_boxplot) / 
+                     p_street_dist / 
+                     p_street_heatmap +
+  plot_layout(heights = c(1.5, 0.8, 1.2)) +
+  plot_annotation(
+    title = "Street-Level Performance Clustering",
+    subtitle = paste("Identified", optimal_k_street, "performance tiers across", 
+                     nrow(street_metrics), "unique street-area combinations"),
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+
+ggsave("clustering_streets_analysis.png", p_street_combined,
+       width = 14, height = 14, dpi = 300, bg = "white")
+
+
+
+# Save street metrics with tier assignments
+
+
+write_csv(street_metrics, "clustering_streets.csv")
+
+
+write_csv(street_cluster_summary, "clustering_street_summary.csv")
+
+
+
+# SAVE ALL OUTPUTS
+
+
+# Save cluster assignments
+write_csv(area_metrics, "clustering_clue_areas.csv")
+
+write_csv(street_metrics, "clustering_streets.csv")
+
+write_csv(cluster_summary, "clustering_area_summary.csv")
+
+write_csv(street_cluster_summary, "clustering_street_summary.csv")
+
+
+# Save area plots
+p_area_combined <- (p_elbow + p_silhouette) / p_pca / p_heatmap +
+  plot_layout(heights = c(1, 2, 1.5)) +
+  plot_annotation(
+    title = "CLUE Area Clustering Analysis",
+    subtitle = paste("Identified", optimal_k, "distinct performance tiers"),
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+
+ggsave("clustering_areas_analysis.png", p_area_combined,
+       width = 14, height = 16, dpi = 300, bg = "white")
+
+
+ggsave("clustering_areas_dendrogram.png", p_dendrogram,
+       width = 12, height = 8, dpi = 300, bg = "white")
+
+
+# Save street plots
+p_street_combined <- p_street_scatter / p_street_dist +
+  plot_annotation(
+    title = "Street-Level Performance Clustering",
+    subtitle = paste("Identified", optimal_k_street, "performance tiers across", 
+                     nrow(street_metrics), "streets"),
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+
+ggsave("clustering_streets_analysis.png", p_street_combined,
+       width = 12, height = 10, dpi = 300, bg = "white")
 
 
 
@@ -1900,36 +3519,97 @@ list(
 
 
 
+p_pca
+
+p_dendrogram
+
+
+p_heatmap
+
+p_street_scatter
+
+
+
+p_street_dist
+
+
+
+```
 
 
 
 
+ Melbourne CBD Is NOT Uniform
+Visualization shows CBD scattered across multiple tiers:
+
+Some CBD streets are Bronze (survivable with competition)
+Many CBD streets are Avoid (death traps!)
+Very few CBD streets are Gold/Silver
+
+
+  PCA Plot (middle):
+
+Melbourne CBD is isolated far right (unique characteristics)
+Tier 1 (red) clusters together (similar performance profiles)
+Tier 3 (green) clusters bottom-right (distinct from prime areas)
+
+  Heatmap (bottom):
+
+Tier 1 has GREEN across all metrics except competition (intentionally low)
+CBD has high competition (109) dragging down other metrics
+Tier 3 shows mixed performance (some good, some bad)
 
 
 
 
+   Dendrogram
+Shows hierarchical relationships:
+
+CBD is very distant from all others (branches high up)
+Carlton & North Melbourne are similar (branch together)
+Docklands & Parkville are similar (both challenging)
 
 
 
+   Street Clustering
+Top scatter plot:
+
+Gold streets (yellow) cluster at low competition + high success
+Avoid streets (dark red) cluster at moderate competition + 0% success
+Most streets are Copper/Bronze (middle mass)
+
+Bottom bar chart:
+
+Copper streets dominate (40 out of 105) - most streets are mediocre
+Only 6 Gold streets - rarity!
+11 Avoid streets - clear death traps
 
 
 
+   For New Restaurant Location:
+
+TIER 1 RECOMMENDATION
+
+Target Areas: Carlton, North Melbourne, Southbank (NOT CBD!)
+Target Streets: Faraday St (Carlton), Macaulay Rd (North Melbourne)
+Expected Success: 25-40%
+Rationale: Established dining scenes, manageable competition
+
+TIER 2 OPTION (High Risk/Reward)
+
+Area: Melbourne CBD
+Streets: Victoria St (Gold), Market Lane (Gold)
+Expected Success: 17-50% (street-dependent!)
+Rationale: Avoid Bronze/Avoid tier CBD streets, target Gold only
 
 
 
+AVOID
 
-
-
-
-
-
-
-
-
-
-
-
-
+Areas: Docklands (except Rakaia Way), Parkville, Kensington
+Streets: Rose Lane, Spencer St, Docklands Drive, Hardware St
+Expected Success: <10%
+Rationale: Historical failure rates near 100%
 
 
 
