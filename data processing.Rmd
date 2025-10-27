@@ -35,6 +35,7 @@ library(knitr)
 library(readr)
 library(stringr)
 library(purrr)
+library(htmltools)
 ```
 
 
@@ -50,6 +51,14 @@ The ‘Cafes and Restaurants with Seating Capacity’ dataset is sourced from th
 ```{r var-types,message = FALSE, warning = FALSE, results = 'show'}
 # Read the cleaned CSV files into R environment
 df <- read_csv("data/cafes-and-restaurants-with-seating-capacity.csv")
+
+df<- df%>%
+  filter(
+    `Industry (ANZSIC4) description` %in% c(
+      "Cafes and Restaurants",
+      "Takeaway Food Services"
+    )
+  )
 
 # Get column names and types
 col_types <- map_chr(df, ~ class(.x)[1])
@@ -239,10 +248,257 @@ The Table \@ref(tab:ind) shows the top 8 industry types in Melbourne’s hospita
 
 
 
+##### Foot traffic data
+
+```{r}
+# Read the cleaned CSV files into R environment
+ped <- read_csv("data/foot.csv")
+
+ped <- ped %>%
+  mutate(
+    date = ymd(Sensing_Date),
+    year = year(date),
+    # Location = "lat, lon" -> split to numeric lat/lon
+    lat = as.numeric(str_trim(str_extract(Location, "^-?\\d+\\.\\d+"))),
+    lon = as.numeric(str_trim(str_extract(Location, "-?\\d+\\.\\d+$")))
+  )
+
+# --- 3) Aggregate hourly -> daily totals per sensor ----
+# Total_of_Directions is the hourly count; sum to daily
+daily <- ped %>%
+  group_by(Location_ID, Sensor_Name, lat, lon, date, year) %>%
+  summarise(
+    daily_total = sum(Total_of_Directions, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# (Optional sanity check: number of hourly rows per day)
+# ped %>% count(Location_ID, date) %>% summary()
+
+# --- 4) Yearly stats per sensor ----
+# We compute:
+#   - n_days: number of days seen in that year for that sensor
+#   - avg_daily: mean of daily totals across observed days
+#   - total_year: sum of daily totals (across observed days)
+yearly <- daily %>%
+  group_by(Location_ID, Sensor_Name, lat, lon, year) %>%
+  summarise(
+    n_days     = n_distinct(date),
+    avg_daily  = mean(daily_total, na.rm = TRUE),
+    total_year = sum(daily_total, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Optional: filter out sensors with very few observed days in a year (e.g., < 200)
+# yearly <- yearly %>% filter(n_days >= 200)
+
+# --- 5) Also compute a multi-year average per sensor (for a single “overview” map) ----
+# This helps if you want one value per sensor across all years available.
+overview <- yearly %>%
+  group_by(Location_ID, Sensor_Name, lat, lon) %>%
+  summarise(
+    years_observed    = n(),
+    avg_daily_overall = mean(avg_daily, na.rm = TRUE),
+    total_all_years   = sum(total_year, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# --- 6) Write outputs ----
+write_csv(yearly,  "yearly_sensor_traffic.csv")
+write_csv(overview, "overview_sensor_traffic.csv")
+
+message("Saved: yearly_sensor_traffic.csv (per sensor x year)")
+message("Saved: overview_sensor_traffic.csv (per sensor overall average)")
+
+# --- 7) Quick interactive map (overview average) ----
+# Binning for color scale
+pal <- colorBin("YlOrRd", domain = overview$avg_daily_overall, bins = 7, na.color = "#CCCCCC")
+
+leaf <- leaflet(overview) |>
+  addTiles() |>
+  addCircleMarkers(
+    lng = ~lon, lat = ~lat,
+    radius = ~rescale(avg_daily_overall, to = c(3, 16)),
+    color = ~pal(avg_daily_overall),
+    stroke = FALSE, fillOpacity = 0.8,
+    popup = ~paste0(
+      "<b>", htmlEscape(Sensor_Name), "</b><br/>",
+      "Avg daily (overall): ", comma(round(avg_daily_overall, 0)), "<br/>",
+      "Years observed: ", years_observed
+    )
+  ) |>
+  addLegend(
+    "bottomright", pal = pal, values = ~avg_daily_overall,
+    title = "Avg daily pedestrians<br/>(overall)", opacity = 0.9
+  )
+
+
+```
+
+
+```{r var-types,message = FALSE, warning = FALSE, results = 'show'}
+
+library(readr)
+library(kableExtra)
+library(pillar)
+
+# load
+df <- read_csv("overview_sensor_traffic.csv", show_col_types = FALSE)
+
+# one row with types; headers are the column names
+types <- vapply(df, function(x) pillar::type_sum(x), character(1))
+
+tbl <- as.data.frame(t(types), stringsAsFactors = FALSE)
+colnames(tbl) <- names(df)
+
+kbl(
+  tbl,
+  format = "html",
+  caption = "Variable Types in Sensor Traffic Dataset",
+  table.attr = 'id="tab:var-types-sensor"'
+) |>
+  kable_styling(
+    bootstrap_options = c("striped", "bordered", "condensed"),
+    full_width = TRUE,
+    position = "center"
+  )
+
+
+```
 
 
 
 
+```{r}
+library(readr)
+library(dplyr)
+library(kableExtra)
+
+# --- Load data ---
+df <- read_csv("overview_sensor_traffic.csv", show_col_types = FALSE)
+
+# --- Dataset structure summary ---
+n_rows <- nrow(df)
+n_cols <- ncol(df)
+n_duplicates <- sum(duplicated(df))
+
+# --- Missing values ---
+missing_summary <- colSums(is.na(df))
+total_missing <- sum(missing_summary)
+missing_cols <- names(missing_summary[missing_summary > 0])
+missing_cols_str <- ifelse(length(missing_cols) > 0, paste(missing_cols, collapse = ", "), "None")
+
+# --- Check for invalid numeric values (example: negative or zero totals) ---
+invalid_values <- if ("avg_daily_overall" %in% names(df)) {
+  sum(df$avg_daily_overall <= 0, na.rm = TRUE)
+} else {
+  0
+}
+
+# --- Create summary table ---
+df_summary <- tibble(
+  `Number of Rows` = n_rows,
+  `Number of Columns` = n_cols,
+  `Number of Duplicate Rows` = n_duplicates,
+  `Total Missing Values` = total_missing,
+  `Columns with NA Values` = length(missing_cols),
+  `Names of Columns with NA Values` = missing_cols_str,
+  `Non-positive Daily Values` = invalid_values
+)
+
+# --- Render the summary table ---
+kbl(
+  df_summary,
+  format = "html",
+  caption = "Summary of Sensor Traffic Dataset Structure and Quality Checks"
+) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "bordered", "condensed"),
+    full_width = FALSE,
+    position = "center"
+  )
+
+```
+
+
+
+
+
+
+
+
+```{r seating-boxplot-compact, fig.align = "center",fig.width=8, fig.height=2, echo=FALSE, message=FALSE, warning=FALSE, fig.cap = " Distribution of Seating Capacity"}
+
+
+
+
+library(ggplot2)
+
+ggplot(df, aes(y = avg_daily_overall)) +
+  geom_boxplot(outlier.size = 0.8, fill = "lightcoral") +
+  coord_cartesian(ylim = c(0, quantile(df$avg_daily_overall, 0.99, na.rm = TRUE))) +  # Zoom to exclude extreme outliers
+  labs(y = "Average Daily Foot Traffic") +
+  theme_minimal(base_size = 10)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Simple leaflet map from your 'overview' data
+# requires: overview with columns: lat, lon, Sensor_Name, years_observed, avg_daily_overall
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(leaflet)
+  library(scales)
+  library(htmltools)  # for htmlEscape
+})
+
+# keep only rows with valid coords
+ov <- overview %>% filter(!is.na(lat), !is.na(lon))
+
+# color scale by average daily pedestrians (multi-year)
+pal <- colorBin("YlOrRd", domain = ov$avg_daily_overall, bins = 7, na.color = "#CCCCCC")
+
+# build popup text once (avoids referencing missing columns)
+ov <- ov %>%
+  mutate(
+    popup_text = paste0(
+      "<b>", htmlEscape(Sensor_Name), "</b><br/>",
+      "Avg daily pedestrians: ", comma(round(avg_daily_overall)), "<br/>",
+      "Years observed: ", years_observed
+    )
+  )
+
+m <- leaflet(ov) |>
+  addProviderTiles("CartoDB.Positron") |>   # <--- cleaner background
+  addCircleMarkers(
+    lng = ~lon, lat = ~lat,
+    radius = ~pmax(3, rescale(avg_daily_overall, to = c(3, 16))),
+    color  = ~pal(avg_daily_overall),
+    stroke = FALSE, fillOpacity = 0.85,
+    popup = ~popup_text
+  ) |>
+  addLegend("bottomright", pal = pal, values = ~avg_daily_overall,
+            title = "Avg daily pedestrians", opacity = 0.9)
+
+m
+
+
+```
 
 
 
@@ -251,6 +507,7 @@ The Table \@ref(tab:ind) shows the top 8 industry types in Melbourne’s hospita
 
 
 #### Data transforming
+
 
 
 
@@ -544,13 +801,14 @@ property_counts_final <- df_ultra_final %>%
   summarise(businesses_at_property = n_distinct(business_id), .groups = "drop")
 
 df_ultra_final <- df_ultra_final %>%
-  select(-businesses_at_property) %>%
+  dplyr::select(-businesses_at_property) %>%
   left_join(property_counts_final, by = c("property_id", "census_year")) %>%
-  select(
+  dplyr::select(
     property_id, business_id, census_year, industry, clue_area, 
     trading_name, business_address, building_address, seating_type, 
     num_seats, lifespan_years, lifespan_group, lon, lat, businesses_at_property
   ) %>%
+  filter(`num_seats` < 201)%>%
   arrange(census_year, property_id, business_id)
 
 
@@ -582,7 +840,7 @@ business_summary <- df_ultra_final %>%
   group_by(property_id) %>%
   mutate(businesses_at_property = n()) %>%
   ungroup() %>%
-  select(property_id, business_id, trading_name, year_span, years_active, 
+  dplyr::select(property_id, business_id, trading_name, year_span, years_active, 
          industry, businesses_at_property) %>%
   arrange(property_id, year_span)
 
@@ -647,7 +905,7 @@ business_status <- df_ultra %>%
 # ADD bias filters
 
 enhanced_ultra <- df_ultra %>%
-  left_join(business_status %>% select(business_id, business_start_year, business_end_year, still_operating), 
+  left_join(business_status %>% dplyr::select(business_id, business_start_year, business_end_year, still_operating), 
             by = "business_id") %>%
   mutate(
 
@@ -680,7 +938,7 @@ enhanced_ultra <- df_ultra %>%
       TRUE ~ "Unknown"
     )
   ) %>%
-  select(-business_start_year, -business_end_year, -still_operating) %>%
+  dplyr::select(-business_start_year, -business_end_year, -still_operating) %>%
   arrange(census_year, property_id, business_id)
 
 # Check quality
@@ -792,9 +1050,7 @@ write_csv(enhanced_ultra, output_file)
 ```
 
 
-
-
-#### Add new features
+##### add street
 
 ```{r}
 
@@ -902,18 +1158,6 @@ write_csv(df_with_streets, "data/df_with_streets.csv")
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 ```{r}
 
 
@@ -936,7 +1180,7 @@ df$street_address[df$street_address == "Yarra Building Federation Square"] <- "F
 df$street_address[df$street_address == "Zoological Gardens Elliott Avenue"] <- "Elliott Avenue"
 
 # Remove street_type 
-df <- df %>% select(-any_of("street_type"))
+df <- df %>% dplyr::select(-any_of("street_type"))
 
 # Save
 write_csv(df, "data/df_with_streets.csv")
@@ -957,8 +1201,7 @@ write_csv(unique_streets, "data/unique_streets.csv")
 
 
 
-
-
+#### reliabiluty
 ```{r}
 library(tidyverse)
 
@@ -1024,7 +1267,7 @@ print(reliability_dist)
 df_final <- df %>%
   left_join(
     street_stats_all %>% 
-      select(street_address, street_avg_lifespan, street_success_rate, 
+      dplyr::select(street_address, street_avg_lifespan, street_success_rate, 
              street_median_seats, total_businesses, reliability),
     by = "street_address"
   ) %>%
@@ -1079,326 +1322,15 @@ write_csv(street_stats_all, "street_statistics_ALL_317.csv")
 
 
 
-```{r}
-library(tidyverse)
-library(sf)
 
 
-# 1. Load data
 
 
-df_source <- read_csv("df_with_street_stats_ALL_STREETS.csv")
 
 
-# 2. Calculate spatial competition (300m)
 
 
 
-
-# Get business entry points (ALL businesses for true market density)
-business_entry_all <- df_source %>%
-  group_by(business_id) %>%
-  arrange(census_year) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  select(business_id, entry_year = census_year, industry, lat, lon, num_seats)
-
-# Convert to spatial
-business_sf <- st_as_sf(
-  business_entry_all %>% filter(!is.na(lat), !is.na(lon)),
-  coords = c("lon", "lat"),
-  crs = 4326
-) %>% st_transform(28355)
-
-radius_m <- 300
-n <- nrow(business_sf)
-
-competition_metrics <- data.frame(
-  business_id = business_sf$business_id,
-  entry_year = business_sf$entry_year,
-  industry = business_sf$industry,
-  competitors_300m = numeric(n),
-  same_industry_300m = numeric(n),
-  other_industry_300m = numeric(n)
-)
-
-buffers <- st_buffer(business_sf, dist = radius_m)
-
-cat("Processing", n, "businesses...\n")
-pb <- txtProgressBar(max = n, style = 3)
-
-for (i in 1:n) {
-  if (i %% 500 == 0) setTxtProgressBar(pb, i)
-  
-  focal_year <- business_sf$entry_year[i]
-  focal_industry <- business_sf$industry[i]
-  
-  # Businesses existing at entry year
-  existing <- business_sf$entry_year <= focal_year
-  
-  # Total competition
-  overlaps <- st_intersects(buffers[i,], business_sf[existing,], sparse = FALSE)
-  competition_metrics$competitors_300m[i] <- sum(overlaps) - 1
-  
-  # Same industry
-  same_ind <- existing & business_sf$industry == focal_industry
-  overlaps_same <- st_intersects(buffers[i,], business_sf[same_ind,], sparse = FALSE)
-  competition_metrics$same_industry_300m[i] <- sum(overlaps_same) - 1
-  
-  # Other industry
-  other_ind <- existing & business_sf$industry != focal_industry
-  overlaps_other <- st_intersects(buffers[i,], business_sf[other_ind,], sparse = FALSE)
-  competition_metrics$other_industry_300m[i] <- sum(overlaps_other) - 1
-}
-
-close(pb)
-
-# Add derived metrics
-competition_metrics <- competition_metrics %>%
-  mutate(
-    high_competition = as.numeric(competitors_300m >= 15),
-    industry_ratio = same_industry_300m / (competitors_300m + 1),
-    competition_cat = case_when(
-      competitors_300m == 0 ~ "Isolated",
-      competitors_300m <= 5 ~ "Very Low (1-5)",
-      competitors_300m <= 15 ~ "Low (6-15)",
-      competitors_300m <= 30 ~ "Medium (16-30)",
-      competitors_300m <= 50 ~ "High (31-50)",
-      TRUE ~ "Very High (>50)"
-    )
-  )
-
-
-
-
-competition_metrics %>% 
-  count(competition_cat) %>% 
-  mutate(pct = round(100*n/sum(n), 1)) %>%
-  print()
-
-
-competition_metrics %>%
-  group_by(industry) %>%
-  summarise(
-    n = n(),
-    mean = round(mean(competitors_300m), 1),
-    median = median(competitors_300m),
-    p75 = quantile(competitors_300m, 0.75),
-    max = max(competitors_300m),
-    .groups = "drop"
-  ) %>% print()
-
-
-# Prepare modelling samples
-
-
-
-# One row per business
-business_level <- df_source %>%
-  group_by(business_id) %>%
-  arrange(census_year) %>%
-  slice_head(n = 1) %>%
-  ungroup()
-
-
-
-# Apply bias filter
-df_model <- business_level %>%
-  filter(bias_filter == FALSE)
-
-
-# Join competetion metrics
-
-
-
-
-df_with_comp <- df_model %>%
-  left_join(
-    competition_metrics %>% 
-      select(business_id, competitors_300m, same_industry_300m, 
-             other_industry_300m, high_competition, industry_ratio, competition_cat),
-    by = "business_id"
-  )
-
-
-# 5. Select streets based on performance
-
-
-
-
-street_performance <- df_with_comp %>%
-  filter(!is.na(street_address)) %>%
-  group_by(street_address) %>%
-  summarise(
-    n_businesses = n(),
-    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
-    success_rate = mean(lifespan_group == ">12 yrs") * 100,
-    median_lifespan = median(lifespan_years, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  filter(n_businesses >= 5)
-
-
-# Top 20 by success rate
-top20_success <- street_performance %>%
-  arrange(desc(success_rate)) %>%
-  head(20)
-
-
-
-# Bottom 20 by success rate
-bottom20_success <- street_performance %>%
-  arrange(success_rate) %>%
-  head(20)
-
-
-
-# Top 20 by avg lifespan
-top20_lifespan <- street_performance %>%
-  arrange(desc(avg_lifespan)) %>%
-  head(20)
-
-
-
-# Bottom 20 by avg lifespan
-bottom20_lifespan <- street_performance %>%
-  arrange(avg_lifespan) %>%
-  head(20)
-
-
-
-# Combine
-best_streets <- unique(c(top20_success$street_address, top20_lifespan$street_address))
-worst_streets <- unique(c(bottom20_success$street_address, bottom20_lifespan$street_address))
-selected_streets <- unique(c(best_streets, worst_streets))
-
-
-# feature processing
-
-
-
-df_features <- df_with_comp %>%
-  mutate(
-    # Target variable
-    lifespan_numeric = lifespan_years,
-    
-    # Business characteristics
-    industry_cafe = as.numeric(industry == "Cafes"),
-    log_seats = log1p(num_seats),
-    
-    # Size categories
-    size_small = as.numeric(num_seats <= 40),
-    size_medium = as.numeric(num_seats > 40 & num_seats <= 80),
-    size_large = as.numeric(num_seats > 80),
-    
-    # Competition metrics
-    comp_300m = competitors_300m,
-    same_ind_300m = same_industry_300m,
-    other_ind_300m = other_industry_300m,
-    comp_density = competitors_300m / 100,
-    industry_dominance = same_industry_300m / (competitors_300m + 1),
-    
-    # Competition flags
-    high_comp = as.numeric(competitors_300m >= 30),
-    very_high_comp = as.numeric(competitors_300m >= 50),
-    isolated = as.numeric(competitors_300m == 0),
-    
-    # Temporal
-    entry_year_norm = (census_year - 2002) / (2023 - 2002),
-    is_recent = as.numeric(census_year >= 2015),
-    
-    # Location
-    dist_cbd = sqrt((lon - 144.9631)^2 + (lat - (-37.8136))^2) * 111,
-    
-    # Property
-    property_crowding = as.numeric(businesses_at_property >= 3)
-  )
-
-# Create street dummies for selected streets
-for (street in selected_streets) {
-  col_name <- paste0("street_", str_replace_all(str_to_lower(street), "[^a-z0-9]", "_"))
-  df_features[[col_name]] <- as.numeric(df_features$street_address == street)
-}
-
-# Add street category indicators
-df_features <- df_features %>%
-  mutate(
-    on_best_street = as.numeric(street_address %in% best_streets),
-    on_worst_street = as.numeric(street_address %in% worst_streets)
-  )
-
-
-# Validation
-
-
-# Check for duplicate columns
-dup_cols <- names(df_features)[duplicated(names(df_features))]
-if (length(dup_cols) > 0) {
-  cat("WARNING: Duplicate columns found:", paste(dup_cols, collapse = ", "), "\n")
-} else {
-  cat("✓ No duplicate columns\n")
-}
-
-# Check NAs in key features
-key_features <- c("lifespan_numeric", "industry_cafe", "log_seats", 
-                  "comp_300m", "same_ind_300m", "entry_year_norm", "dist_cbd")
-
-na_summary <- df_features %>%
-  summarise(across(all_of(key_features), ~sum(is.na(.))))
-
-cat("\nNA counts in key features:\n")
-print(t(na_summary))
-
-# Summary by street type
-cat("\n\nOutcomes by street type:\n")
-df_features %>%
-  mutate(street_type = case_when(
-    on_best_street == 1 ~ "Best Streets",
-    on_worst_street == 1 ~ "Worst Streets",
-    TRUE ~ "Other Streets"
-  )) %>%
-  group_by(street_type) %>%
-  summarise(
-    n = n(),
-    mean_lifespan = round(mean(lifespan_numeric, na.rm = TRUE), 1),
-    success_rate = round(mean(lifespan_group == ">12 yrs") * 100, 1),
-    .groups = "drop"
-  ) %>% print()
-
-# Competition summary in modeling sample
-cat("\n\nCompetition in modeling sample:\n")
-df_features %>%
-  summarise(
-    n = n(),
-    mean_comp = round(mean(comp_300m, na.rm = TRUE), 1),
-    median_comp = median(comp_300m, na.rm = TRUE),
-    q75 = quantile(comp_300m, 0.75, na.rm = TRUE),
-    max_comp = max(comp_300m, na.rm = TRUE)
-  ) %>% print()
-
-
-# 8. SAVE OUTPUTS
-
-write_csv(df_features, "df_modeling_final.csv")
-write_csv(competition_metrics, "competition_300m_all.csv")
-write_csv(street_performance, "street_performance_all.csv")
-
-# Create street selection summary
-street_summary <- data.frame(
-  street_address = selected_streets,
-  category = case_when(
-    selected_streets %in% best_streets & selected_streets %in% worst_streets ~ "Both",
-    selected_streets %in% best_streets ~ "Best",
-    TRUE ~ "Worst"
-  )
-) %>%
-  left_join(street_performance, by = "street_address") %>%
-  arrange(desc(success_rate))
-
-write_csv(street_summary, "selected_streets_summary.csv")
-
-
-```
 
 #### Prepare model data
 
@@ -1417,7 +1349,7 @@ business_entry <- df_source %>%
   arrange(census_year) %>%
   slice_head(n = 1) %>%
   ungroup() %>%
-  select(business_id, entry_year = census_year, industry, lat, lon) %>%
+  dplyr::select(business_id, entry_year = census_year, industry, lat, lon) %>%
   filter(!is.na(lat), !is.na(lon))
 
 valid_business_ids <- business_entry$business_id
@@ -1517,7 +1449,7 @@ worst_streets <- street_perf %>%
 
 # Build final dataset
 df_model <- business_level %>%
-  inner_join(comp_200m %>% select(business_id, comp_total, comp_same, comp_other), 
+  inner_join(comp_200m %>% dplyr::select(business_id, comp_total, comp_same, comp_other), 
              by = "business_id")
 
 df_features <- df_model %>%
@@ -1551,7 +1483,7 @@ final_features <- c(
 )
 
 df_final <- df_features %>%
-  select(all_of(final_features))
+  dplyr::select(all_of(final_features))
 
 # Save
 write_csv(df_final, "df_clean_200m_shinny.csv")
@@ -1579,355 +1511,237 @@ print(summary_stats)
 
 
 
+
+
+
+
 ```{r}
-library(tidyverse)
-library(randomForest)
-library(ggplot2)
-library(knitr)
 
 
 
-# Load data
-df_best <- read_csv("df_clean_200m.csv", show_col_types = FALSE)
 
-# Train model
-set.seed(42)
-best_rf <- randomForest(
-  lifespan_numeric ~ .,
-  data = df_best,
-  ntree = 500,
-  importance = TRUE,
-  nodesize = 20
-)
+# Load the Ultra final data
+df_ultra <- read_csv("data/df_FINAL_2industries.csv")
 
-# Extract metrics
-y_actual <- df_best$lifespan_numeric
-y_pred <- predict(best_rf, df_best)
-residuals <- y_actual - y_pred
-
-oob_r2 <- tail(best_rf$rsq, 1)
-oob_rmse <- sqrt(tail(best_rf$mse, 1))
-insample_r2 <- cor(y_actual, y_pred)^2
-insample_mae <- mean(abs(residuals))
-baseline_rmse <- sqrt(mean((y_actual - mean(y_actual))^2))
+cat("Loaded", nrow(df_ultra), "records from Ultra data\n")
+cat("Unique businesses:", n_distinct(df_ultra$business_id), "\n")
 
 
-
-table1_performance <- tibble(
-  Metric = c(
-    "OOB R² (Out-of-Bag)",
-    "OOB RMSE",
-    "Mean Absolute Error (MAE)",
-    "Baseline RMSE (Always Predict Mean)",
-    "Model Improvement vs Baseline"
-  ),
-  Value = c(
-    sprintf("%.4f", oob_r2),
-    sprintf("%.2f", oob_rmse),
-    sprintf("%.2f", insample_mae),
-    sprintf("%.2f", baseline_rmse),
-    sprintf("%.1f%%", (baseline_rmse - oob_rmse) / baseline_rmse * 100)
-  ),
-)
+# CALCULATE BUSINESS OPERATING STATUS
 
 
-
-importance_raw <- data.frame(
-  feature = rownames(importance(best_rf)),
-  inc_mse = importance(best_rf)[, "%IncMSE"],
-  inc_purity = importance(best_rf)[, "IncNodePurity"]
-)
-
-correlations <- df_best %>%
-  dplyr::select(-lifespan_numeric) %>%
-  summarise(across(everything(), ~cor(., df_best$lifespan_numeric))) %>%
-  pivot_longer(everything(), names_to = "feature", values_to = "correlation")
-
-table2_importance <- importance_raw %>%
-  left_join(correlations, by = "feature") %>%
-  arrange(desc(inc_mse)) %>%
-  mutate(
-    rank = row_number(),
-    feature_clean = case_when(
-      feature == "same_ind" ~ "Same-Industry Competition (200m)",
-      feature == "other_ind" ~ "Other-Industry Competition (200m)",
-      feature == "log_seats" ~ "Restaurant Size (log seats)",
-      feature == "on_best_street" ~ "Prime Location Street",
-      feature == "on_worst_street" ~ "Poor Quality Street",
-      feature == "property_competition" ~ "Property-Level Competition",
-      feature == "industry_cafe" ~ "Cafe Business Model",
-      feature == "outdoor_seating" ~ "Outdoor Seating",
-      feature == "mixed_seating" ~ "Mixed Seating Type",
-      feature == "clue_melbourne__cbd_" ~ "Melbourne CBD Location",
-      feature == "clue_docklands" ~ "Docklands Area",
-      feature == "clue_carlton" ~ "Carlton Area",
-      feature == "clue_southbank" ~ "Southbank Area",
-      TRUE ~ str_to_title(str_replace_all(feature, "_", " "))
-    ),
-    effect_direction = case_when(
-      correlation < -0.02 ~ "Negative ↓",
-      correlation > 0.02 ~ "Positive ↑",
-      TRUE ~ "Neutral"
-    )
-  ) %>%
-  head(10) %>%
-  dplyr::select(
-    Rank = rank,
-    Feature = feature_clean,
-    Importance = inc_mse,
-    `Effect on Lifespan` = effect_direction,
-    Correlation = correlation
-  ) %>%
-  mutate(
-    Importance = round(Importance, 1),
-    Correlation = sprintf("%+.3f", Correlation)
-  )
-
-
-
-table3_negative <- importance_raw %>%
-  left_join(correlations, by = "feature") %>%
-  filter(correlation < -0.02) %>%
-  arrange(desc(inc_mse)) %>%
-  mutate(
-    feature_clean = case_when(
-      feature == "same_ind" ~ "Same-Industry Competition",
-      feature == "other_ind" ~ "Other-Industry Competition",
-      feature == "property_competition" ~ "Property-Level Competition",
-      feature == "on_worst_street" ~ "Poor Quality Street",
-      feature == "clue_docklands" ~ "Docklands Location",
-      TRUE ~ str_to_title(str_replace_all(feature, "_", " "))
-    ),
-    effect_size = case_when(
-      abs(correlation) > 0.15 ~ "Strong",
-      abs(correlation) > 0.08 ~ "Moderate",
-      TRUE ~ "Weak"
-    )
-  ) %>%
-  head(8) %>%
-  dplyr::select(
-    Feature = feature_clean,
-    Importance = inc_mse,
-    `Correlation with Lifespan` = correlation,
-    `Effect Strength` = effect_size
-  ) %>%
-  mutate(
-    Importance = round(Importance, 1),
-    `Correlation with Lifespan` = sprintf("%+.3f", `Correlation with Lifespan`)
-  )
-
-
-
-table4_positive <- importance_raw %>%
-  left_join(correlations, by = "feature") %>%
-  filter(correlation > 0.02) %>%
-  arrange(desc(inc_mse)) %>%
-  mutate(
-    feature_clean = case_when(
-      feature == "log_seats" ~ "Restaurant Size (Larger)",
-      feature == "on_best_street" ~ "Prime Location Street",
-      feature == "clue_melbourne__cbd_" ~ "Melbourne CBD Location",
-      feature == "industry_cafe" ~ "Cafe Business Model",
-      feature == "clue_carlton" ~ "Carlton Location",
-      feature == "outdoor_seating" ~ "Outdoor Seating",
-      TRUE ~ str_to_title(str_replace_all(feature, "_", " "))
-    ),
-    effect_size = case_when(
-      abs(correlation) > 0.15 ~ "Strong",
-      abs(correlation) > 0.08 ~ "Moderate",
-      TRUE ~ "Weak"
-    )
-  ) %>%
-  head(8) %>%
-  dplyr::select(
-    Feature = feature_clean,
-    Importance = inc_mse,
-    `Correlation with Lifespan` = correlation,
-    `Effect Strength` = effect_size
-  ) %>%
-  mutate(
-    Importance = round(Importance, 1),
-    `Correlation with Lifespan` = sprintf("%+.3f", `Correlation with Lifespan`)
-  )
-
-
-
-same_ind_stats <- df_best %>%
+business_status <- df_ultra %>%
+  group_by(business_id) %>%
   summarise(
-    mean = mean(same_ind),
-    median = median(same_ind),
-    q25 = quantile(same_ind, 0.25),
-    q75 = quantile(same_ind, 0.75),
-    q90 = quantile(same_ind, 0.90)
+    business_start_year = min(census_year),
+    business_end_year = max(census_year),
+    still_operating = (business_end_year == 2023),  # 2023 is the latest year in dataset
+    lifespan_group = first(lifespan_group),
+    .groups = "drop"
   )
 
-other_ind_stats <- df_best %>%
+
+
+# ADD BIAS FILTER LOGIC
+
+
+enhanced_ultra <- df_ultra %>%
+  left_join(business_status %>% select(business_id, business_start_year, business_end_year, still_operating), 
+            by = "business_id") %>%
+  mutate(
+    # BIAS FILTER LOGIC:
+    # TRUE = exclude from bias-corrected analysis (but keep for temporal analysis)
+    # FALSE = include in all analysis
+    bias_filter = case_when(
+      # Keep ALL >12 year businesses (whether operating or closed)
+      lifespan_group == ">12 yrs" ~ FALSE,
+      
+      # For shorter lifespan groups: only keep closed businesses
+      lifespan_group != ">12 yrs" & !still_operating ~ FALSE,  # Closed = keep (true lifespan)
+      lifespan_group != ">12 yrs" & still_operating ~ TRUE,    # Still operating = filter out (biased lifespan)
+      
+      TRUE ~ FALSE
+    ),
+    
+    # Add descriptive status for transparency
+    business_status = case_when(
+      lifespan_group == ">12 yrs" & still_operating ~ "Long-term Success (Operating)",
+      lifespan_group == ">12 yrs" & !still_operating ~ "Long-term Success (Closed)",
+      !still_operating ~ "Closed Business",
+      still_operating ~ "Still Operating (Biased Lifespan)",
+      TRUE ~ "Unknown"
+    ),
+    
+    # Add analysis recommendation
+    analysis_usage = case_when(
+      bias_filter == FALSE ~ "Use in All Analysis",
+      bias_filter == TRUE ~ "Temporal Only (Exclude from Lifespan Analysis)",
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+  # Clean up temporary columns
+  select(-business_start_year, -business_end_year, -still_operating) %>%
+  # Arrange for consistency
+  arrange(census_year, property_id, business_id)
+
+
+# QUALITY ANALYSIS & VALIDATION
+
+
+
+
+# Overall filtering impact
+total_records <- nrow(enhanced_ultra)
+filtered_records <- sum(enhanced_ultra$bias_filter)
+kept_records <- total_records - filtered_records
+
+
+
+# Business-level analysis
+business_analysis <- enhanced_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  count(lifespan_group, business_status) %>%
+  pivot_wider(names_from = business_status, values_from = n, values_fill = 0)
+
+
+print(business_analysis)
+
+# Lifespan group impact
+lifespan_impact <- enhanced_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  group_by(lifespan_group) %>%
   summarise(
-    mean = mean(other_ind),
-    median = median(other_ind),
-    q25 = quantile(other_ind, 0.25),
-    q75 = quantile(other_ind, 0.75),
-    q90 = quantile(other_ind, 0.90)
+    total_businesses = n(),
+    filtered_out = sum(bias_filter),
+    kept_for_analysis = total_businesses - filtered_out,
+    filter_rate = round(filtered_out / total_businesses * 100, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(lifespan_group)
+
+
+print(lifespan_impact)
+
+# Area impact analysis
+area_impact <- enhanced_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  group_by(clue_area) %>%
+  summarise(
+    total_businesses = n(),
+    filtered_out = sum(bias_filter),
+    kept_for_analysis = total_businesses - filtered_out,
+    filter_rate = round(filtered_out / total_businesses * 100, 1),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_businesses))
+
+
+print(head(area_impact, 10))
+
+# Temporal impact by year
+temporal_impact <- enhanced_ultra %>%
+  group_by(census_year) %>%
+  summarise(
+    total_records = n(),
+    filtered_records = sum(bias_filter),
+    kept_records = total_records - filtered_records,
+    filter_rate = round(filtered_records / total_records * 100, 1),
+    .groups = "drop"
   )
 
-table5_competition <- tibble(
-  `Competition Type` = c("Same-Industry (Restaurants/Cafes)", "Other-Industry (Bars/Pubs/Fast Food)"),
-  Mean = c(round(same_ind_stats$mean, 1), round(other_ind_stats$mean, 1)),
-  Median = c(same_ind_stats$median, other_ind_stats$median),
-  `25th %ile` = c(same_ind_stats$q25, other_ind_stats$q25),
-  `75th %ile` = c(same_ind_stats$q75, other_ind_stats$q75),
-  `90th %ile (High Risk)` = c(same_ind_stats$q90, other_ind_stats$q90),
-  `Effect on Survival` = c(
-    "Each competitor reduces lifespan",
-    "Strongest negative predictor"
+
+print(tail(temporal_impact, 8))
+
+# Industry impact
+industry_impact <- enhanced_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  group_by(industry) %>%
+  summarise(
+    total_businesses = n(),
+    filtered_out = sum(bias_filter),
+    kept_for_analysis = total_businesses - filtered_out,
+    filter_rate = round(filtered_out / total_businesses * 100, 1),
+    .groups = "drop"
   )
+
+
+print(industry_impact)
+
+
+# VERIFY COLUMN NAMES MATCH
+
+
+
+print(names(enhanced_ultra))
+
+# Expected columns based on enhanced_with_filters structure
+expected_columns <- c(
+  "property_id", "business_id", "census_year", "industry", "clue_area",
+  "trading_name", "business_address", "building_address", "seating_type",
+  "num_seats", "lifespan_years", "lifespan_group", "lon", "lat",
+  "businesses_at_property", "bias_filter", "business_status", "analysis_usage"
 )
 
 
-
-table6_reliability <- tibble(
-  `Reliability Check` = c(
-    "Sample Size",
-    "Feature Count",
-    "Predictions within ±3 years",
-    "Predictions within ±5 years",
-    "Mean Residual (Bias Check)",
-    "Model Convergence",
-    "Overfit Gap (In-sample - OOB R²)"
-  ),
-  Result = c(
-    sprintf("%d businesses", nrow(df_best)),
-    sprintf("%d features", ncol(df_best) - 1),
-    sprintf("%.1f%%", mean(abs(residuals) <= 3) * 100),
-    sprintf("%.1f%%", mean(abs(residuals) <= 5) * 100),
-    sprintf("%.3f (near zero = unbiased)", mean(residuals)),
-    "Converged at ~400 trees",
-    sprintf("%.1f pp (acceptable)", (insample_r2 - oob_r2) * 100)
-  ),
-  Assessment = c(
-    "✓ Adequate",
-    "✓ Reasonable",
-    ifelse(mean(abs(residuals) <= 3) >= 0.5, "✓ Good", "⚠ Fair"),
-    ifelse(mean(abs(residuals) <= 5) >= 0.7, "✓ Good", "⚠ Fair"),
-    ifelse(abs(mean(residuals)) < 0.1, "✓ Unbiased", "⚠ Slight bias"),
-    "✓ Stable",
-    ifelse((insample_r2 - oob_r2) < 0.05, "✓ Low overfit", "⚠ Moderate overfit")
-  )
-)
+print(expected_columns)
 
 
 
 
+# USAGE EXAMPLES FOR ANALYSIS
 
 
-# Save visualizations 
-invisible({
-  
-  # Plot 1: Top 15 Features
-  p1 <- table2_importance %>%
-    bind_rows(
-      importance_raw %>%
-        left_join(correlations, by = "feature") %>%
-        arrange(desc(inc_mse)) %>%
-        slice(11:15) %>%
-        mutate(
-          feature_clean = str_to_title(str_replace_all(feature, "_", " ")),
-          effect_direction = ifelse(correlation > 0, "Positive ↑", "Negative ↓"),
-          Rank = 11:15,
-          Importance = round(inc_mse, 1),
-          Correlation = sprintf("%+.3f", correlation)
-        ) %>%
-        dplyr::select(Rank, Feature = feature_clean, Importance, 
-               `Effect on Lifespan` = effect_direction, Correlation)
-    ) %>%
-    mutate(
-      Feature = reorder(Feature, Importance),
-      effect_color = ifelse(`Effect on Lifespan` == "Positive ↑", "Positive", "Negative")
-    ) %>%
-    ggplot(aes(x = Importance, y = Feature, fill = effect_color)) +
-    geom_col() +
-    scale_fill_manual(values = c("Positive" = "#10b981", "Negative" = "#dc2626")) +
-    labs(title = "Feature Importance: Top 15 Predictors",
-         subtitle = "Green = increases lifespan | Red = decreases lifespan",
-         x = "Importance (% Increase in MSE)",
-         y = NULL,
-         fill = "Effect") +
-    theme_minimal(base_size = 11) +
-    theme(plot.title = element_text(face = "bold"),
-          legend.position = "bottom")
-  
-  ggsave("model_importance_top15.png", p1, width = 12, height = 8, dpi = 300)
-  
-  # Plot 2: Predictions vs Actual
-  p2 <- data.frame(actual = y_actual, predicted = y_pred) %>%
-    ggplot(aes(x = actual, y = predicted)) +
-    geom_point(alpha = 0.3, color = "#3b82f6") +
-    geom_abline(slope = 1, intercept = 0, color = "#dc2626", 
-                linetype = "dashed", size = 1) +
-    annotate("text", x = 2, y = 22,
-             label = sprintf("OOB R² = %.3f\nRMSE = %.2f years", oob_r2, oob_rmse),
-             hjust = 0, size = 5) +
-    labs(title = "Model Predictions vs Actual Lifespan",
-         subtitle = "Dashed line = perfect prediction",
-         x = "Actual Lifespan (years)",
-         y = "Predicted Lifespan (years)") +
-    theme_minimal(base_size = 11) +
-    theme(plot.title = element_text(face = "bold"))
-  
-  ggsave("model_predictions_vs_actual.png", p2, width = 9, height = 9, dpi = 300)
-})
+
+# Sample data to show the structure
+
+sample_data <- enhanced_ultra %>%
+  select(business_id, census_year, trading_name, clue_area, lifespan_group, 
+         bias_filter, business_status, analysis_usage) %>%
+  head(10)
+print(sample_data)
 
 
-list(
-  performance = table1_performance,
-  importance_top10 = table2_importance,
-  negative_factors = table3_negative,
-  positive_factors = table4_positive,
-  competition_summary = table5_competition,
-  reliability = table6_reliability
-)
+# SAVE ENHANCED DATA
 
 
- p1
- p2
+output_file <- "df_ULTRA_enhanced_with_filters.csv"
+write_csv(enhanced_ultra, output_file)
+
+
 ```
 
-Model Performance Summary
-
-R² = 11.2% - Model explains 11.2% of lifespan variance using location and competition factors alone
-
-While 11% R² may seem modest, this is strong performance for business survival prediction using only observable site characteristics. The remaining 89% is explained by factors we cannot measure pre-opening (food quality, management, service, marketing
-
-
-Other-industry competition more harmful than same-industry,
-Melbourne CBD location (19% more important than alternatives),
-Larger restaurants (seats) show better survival in competitive markets,
-Poor quality streets + Docklands area show consistent negative effects,
-Prime location streets + Carlton area boost survival,
-Cafes outlive full-service restaurants,
-
-
-
-
-PRIORITY 1: CBD location (31.8 importance). Carlton: Solid alternative to CBD - stable positive effect
-PRIORITY 2: Low other-industry competition (<25 competitors)
-PRIORITY 3: Avoid worst streets (24.6 penalty)
-PRIORITY 4: Avoid multi-tenant properties if possible
-
-
-
-
-Avoid These Red Flags:
-
-Docklands area (consistently negative)
-Worst-performing streets (24.6 importance penalty)
-Multi-tenant properties with >3 food businesses
 
 
 
 
 
-#### Prepare Shinny app data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```{r}
 
@@ -2302,6 +2116,8 @@ write_csv(competition_summary, "competition_metrics_summary.csv")
 
 
 
+
+
 ```{r}
 
 
@@ -2555,6 +2371,8 @@ write_csv(street_lookup_fixed, "street_analysis_lookup_FIXED.csv")
 ```
 
 
+
+
 #### Add foot traffic data
 
 ```{r}
@@ -2771,8 +2589,6 @@ if (nrow(business_level) > 0) {
                              as.numeric(business_level$lifespan_group == ">12 yrs"), 
                              use = "complete.obs")
   
-  cat("Correlation: Foot Traffic vs Lifespan:", round(cor_traffic_lifespan, 3), "\n")
-  cat("Correlation: Foot Traffic vs Success (>12y):", round(cor_traffic_success, 3), "\n\n")
 }
 
 # Sweet spot analysis
@@ -2781,147 +2597,256 @@ sweet_spot <- traffic_survival %>%
   arrange(desc(success_rate)) %>%
   slice_head(n = 1)
 
-cat("SWEET SPOT for Foot Traffic:\n")
-cat("  Range:", sweet_spot$traffic_bin, "daily pedestrians\n")
-cat("  Success Rate:", sweet_spot$success_rate, "%\n")
-cat("  Avg Lifespan:", sweet_spot$avg_lifespan, "years\n")
-cat("  Avg Competition:", sweet_spot$avg_competition, "competitors\n\n")
 
-cat("═══════════════════════════════════════════════════════════════════════\n")
-cat("INTEGRATION COMPLETE - Ready for enhanced Shiny app!\n")
-cat("═══════════════════════════════════════════════════════════════════════\n")
 ```
-
 
 
 
 ```{r}
 
 
-library(tidyverse)
-library(patchwork)
-library(scales)
+# 1) Load the attached canonical file
+df <- readr::read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
 
-# Load data (already filtered correctly)
-df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+# 2) Compute first/last seen years per business_id
+meta <- df %>%
+  group_by(business_id) %>%
+  summarise(
+    first_seen_year = min(census_year, na.rm = TRUE),
+    last_seen_year  = max(census_year, na.rm = TRUE),
+    # observed lifespan within the data window (kept separate from your existing column)
+    lifespan_years_obs = last_seen_year - first_seen_year + 1,
+    .groups = "drop"
+  )
 
-df_analysis <- df_full %>%
-  filter(!bias_filter) %>%  # ✓ Correct: Completed lifecycles only
+# 3) Join meta back and create filters
+df_with_flags <- df %>%
+  left_join(meta, by = "business_id") %>%
+  mutate(
+    # Veteran if observed lifespan > 12 *or* your existing group marks it as >12 yrs
+    is_veteran_obs = lifespan_years_obs > 12 |
+                     (!is.na(lifespan_group) & lifespan_group == ">12 yrs"),
+
+    # NEW: start-year filter to remove left-censoring bias
+    # Keep if first seen after 2002 OR is a clear veteran
+    start_year_filter = first_seen_year > 2002 | is_veteran_obs,
+
+    # COMPOSITE: reuse your existing bias_filter (handles right-censoring)
+    # and add the new start-year rule for lifecycle/model analyses
+    include_lifecycle_biasfree = (!bias_filter) & start_year_filter
+  )
+
+# 4) (Optional) Quick diagnostics
+
+print(df_with_flags %>% distinct(business_id, start_year_filter) %>% count(start_year_filter))
+
+
+print(df_with_flags %>% distinct(business_id, include_lifecycle_biasfree) %>% count(include_lifecycle_biasfree))
+
+
+print(
+  df_with_flags %>%
+    distinct(business_id, first_seen_year, is_veteran_obs) %>%
+    filter(first_seen_year == 2002) %>%
+    count(is_veteran_obs)
+)
+
+# 5) Save updated dataset (non-destructive new file)
+readr::write_csv(df_with_flags, "df_ULTRA_enhanced_with_traffic.csv")
+
+
+# 6) (Optional) One-row-per-business view for analyses that need a single row per firm at first observation
+df_firstrow_with_flags <- df_with_flags %>%
+  arrange(business_id, census_year) %>%
   group_by(business_id) %>%
   slice_head(n = 1) %>%
   ungroup()
 
-df_traffic <- df_analysis %>% filter(!is.na(avg_daily_foottraffic))
+readr::write_csv(df_firstrow_with_flags, "df_firstrow_with_filters.csv")
 
-# Calculate stats
-cor_same <- cor(df_analysis$same_industry_200m, df_analysis$lifespan_years)
-cor_other <- cor(df_analysis$other_industry_200m, df_analysis$lifespan_years)
-cor_size <- cor(df_analysis$num_seats, df_analysis$lifespan_years)
-cor_traffic <- cor(df_traffic$avg_daily_foottraffic, df_traffic$lifespan_years)
 
-lm_same <- lm(lifespan_years ~ same_industry_200m, data = df_analysis)
-lm_other <- lm(lifespan_years ~ other_industry_200m, data = df_analysis)
-lm_size <- lm(lifespan_years ~ num_seats, data = df_analysis)
-lm_traffic <- lm(lifespan_years ~ avg_daily_foottraffic, data = df_traffic)
+```
 
-# Panel A: Same-Industry (Linear - confirmed)
-p_same <- ggplot(df_analysis, aes(x = same_industry_200m, y = lifespan_years)) +
-  geom_point(alpha = 0.15, size = 1, color = "#3498db") +
-  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
-              alpha = 0.2, size = 1.5) +
-  annotate("text", x = 5, y = 21,
-           label = paste0("r = ", round(cor_same, 3), 
-                         "\nR² = ", round(summary(lm_same)$r.squared, 4),
-                         "\n✓ Linear relationship"),
-           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
-  labs(title = "A. Same-Industry Competition",
-       subtitle = "Clear negative relationship → Keep in model",
-       x = "Competitors (200m)", y = "Lifespan (years)") +
+
+```{r}
+library(dplyr)
+library(readr)
+
+# If your data frame is already in memory as `df`, skip the read_csv line.
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+# ---- build a business-level table (first observation per business) ----
+biz_first <- df %>%
+  arrange(business_id, census_year) %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+# ---- apply BOTH filters to define the valid population for street stats ----
+biz_valid <- biz_first %>%
+  filter(bias_filter == FALSE, start_year_filter == TRUE)
+
+# ---- recompute street-level rollups (same names as before) ----
+street_rollups <- biz_valid %>%
+  group_by(street_address) %>%
+   summarise(
+    n_businesses        = n(),  # Now truly one row per business
+    n_success           = sum(lifespan_group == ">12 yrs", na.rm = TRUE),
+    street_avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    street_success_rate = 100 * n_success / n_businesses,
+    street_median_seats = mean(num_seats, na.rm = TRUE),
+    .groups = "drop"
+  )
+# ---- overwrite the three columns (names unchanged) and keep everything else ----
+df_updated <- df %>%
+  select(-any_of(c("street_avg_lifespan", "street_success_rate", "street_median_seats"))) %>%
+  left_join(street_rollups, by = "street_address")
+
+# optional: save
+write_csv(df_updated, "df_ULTRA_enhanced_with_traffic.csv")
+
+
+```
+
+
+
+
+
+#### EDA
+
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Load data
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
+  filter(start_year_filter == TRUE)
+
+# Prepare yearly counts (unique businesses) for the two industries
+industry_year_counts <- df %>%
+  filter(industry %in% c("Cafes", "Takeaway")) %>%
+  mutate(industry_plot = recode(industry, "Cafes" = "Restaurant", "Takeaway" = "Takeaway")) %>%
+  group_by(census_year, industry_plot) %>%
+  summarise(Count = n_distinct(business_id), .groups = "drop") %>%
+  arrange(census_year, industry_plot)
+
+# Plot: single panel, two lines, dots at each year
+ggplot(industry_year_counts, aes(x = census_year, y = Count, color = industry_plot)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    x = "Census Year",
+    y = "Business Count",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+# Yearly business counts
+growth_data <- df %>%
+  filter(industry %in% c("Cafes", "Takeaway")) %>%
+  mutate(industry_plot = recode(industry, "Cafes" = "Restaurant", "Takeaway" = "Takeaway")) %>%
+  group_by(census_year, industry_plot) %>%
+  summarise(Count = n_distinct(business_id), .groups = "drop") %>%
+  arrange(industry_plot, census_year) %>%
+  group_by(industry_plot) %>%
+  mutate(GrowthRate = (Count - lag(Count)) / lag(Count) * 100) %>%
+  ungroup()
+
+# Plot: year-to-year growth (%)
+p_trand <- ggplot(growth_data, aes(x = census_year, y = GrowthRate, color = industry_plot)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Business Growth Trends Over Time",
+    subtitle = "Annual growth patterns across hospitality industries",
+    x = "Census Year",
+    y = "Growth Rate (%)",
+    color = "Industry"
+  ) +
   theme_minimal(base_size = 11) +
-  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
-        plot.subtitle = element_text(color = "#27ae60"),
-        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
-
-# Panel B: Other-Industry (Linear for comparison, but has non-linearity)
-p_other <- ggplot(df_analysis, aes(x = other_industry_200m, y = lifespan_years)) +
-  geom_point(alpha = 0.15, size = 1, color = "#1abc9c") +
-  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
-              alpha = 0.2, size = 1.5) +
-  annotate("text", x = 5, y = 21,
-           label = paste0("r = ", round(cor_other, 3), 
-                         "\nR² = ", round(summary(lm_other)$r.squared, 4),
-                         "\n✓ Moderate non-linearity*"),
-           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
-  labs(title = "B. Other-Industry Competition",
-       subtitle = "Strong negative relationship → Keep in model",
-       x = "Competitors (200m)", y = "Lifespan (years)") +
-  theme_minimal(base_size = 11) +
-  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
-        plot.subtitle = element_text(color = "#27ae60"),
-        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
-
-# Panel C: Restaurant Size (Linear shown, but non-linear exists)
-p_size <- ggplot(df_analysis, aes(x = num_seats, y = lifespan_years)) +
-  geom_point(alpha = 0.15, size = 1, color = "#f39c12") +
-  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
-              alpha = 0.2, size = 1.5) +
-  annotate("text", x = 50, y = 21,
-           label = paste0("r = ", round(cor_size, 3), 
-                         "\nR² = ", round(summary(lm_size)$r.squared, 4),
-                         "\n⚠ Non-linear pattern**"),
-           hjust = 0, vjust = 1, size = 3.5, fontface = "bold") +
-  labs(title = "C. Restaurant Size",
-       subtitle = "Modest relationship (non-linear) → Keep in model",
-       x = "Seats", y = "Lifespan (years)") +
-  theme_minimal(base_size = 11) +
-  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
-        plot.subtitle = element_text(color = "#f39c12"),
-        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
-
-# Panel D: Foot Traffic (Linear, but doesn't matter - excluding)
-p_traffic <- ggplot(df_traffic, aes(x = avg_daily_foottraffic, y = lifespan_years)) +
-  geom_point(alpha = 0.15, size = 1, color = "#95a5a6") +
-  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
-              alpha = 0.2, size = 1.5) +
-  annotate("text", x = 2000, y = 21,
-           label = paste0("r = ", round(cor_traffic, 3), 
-                         "\nR² = ", round(summary(lm_traffic)$r.squared, 4),
-                         "\n✗ No relationship"),
-           hjust = 0, vjust = 1, size = 3.5, fontface = "bold", color = "#e74c3c") +
-  scale_x_continuous(labels = comma) +
-  labs(title = "D. Foot Traffic (Pedestrian Count)",
-       subtitle = "No meaningful relationship → EXCLUDED from model",
-       x = "Pedestrians/day", y = "Lifespan (years)") +
-  theme_minimal(base_size = 11) +
-  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
-        plot.subtitle = element_text(color = "#e74c3c"),
-        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
-
-# Combine
-p_final <- (p_same + p_other) / (p_size + p_traffic) +
-  plot_annotation(
-    title = "Feature Selection: Comparing Predictive Power",
-    subtitle = paste0("Analysis of ", nrow(df_analysis), 
-                     " completed restaurants (unbiased sample) | Linear correlations for comparison"),
-    caption = paste0(
-      "* Other-Industry shows non-linearity (RESET p < 0.001, GAM improves R² by 1.8pp)\n",
-      "** Restaurant Size has inverted-U pattern (optimal: 50-100 seats; RESET p < 0.001, GAM improves R² by 1.6pp)\n",
-      "Sample includes only businesses with completed lifecycles (!bias_filter) | One observation per business"
-    ),
-    theme = theme(
-      plot.title = element_text(face = "bold", size = 18),
-      plot.subtitle = element_text(size = 12, color = "gray30"),
-      plot.caption = element_text(size = 8, color = "gray50", hjust = 0, lineheight = 1.2)
-    )
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", size = 10)
   )
 
-ggsave("feature_comparison_4panel_FINAL.png", p_final,
-       width = 16, height = 12, dpi = 300, bg = "white")
+p_trand 
 
-
-
-p_final
 ```
+
+
+
+
+
+
+
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+# Load data
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+# Define industries of interest
+selected_industries <- c("Cafes", "Takeaway")
+
+# Compute average seating per business (ignore seating_type differences)
+avg_seating_trend <- df %>%
+  filter(industry %in% selected_industries) %>%
+  mutate(industry_plot = recode(industry,
+                                "Cafes" = "Restaurant",
+                                "Takeaway" = "Takeaway")) %>%
+  # collapse duplicates within each business per year
+  group_by(business_id, census_year, industry_plot) %>%
+  summarise(total_seats = max(num_seats, na.rm = TRUE), .groups = "drop") %>%
+  # aggregate per year and industry
+  group_by(census_year, industry_plot) %>%
+  summarise(
+    total_seats = sum(total_seats, na.rm = TRUE),
+    total_businesses = n_distinct(business_id),
+    avg_seats_per_business = total_seats / total_businesses,
+    .groups = "drop"
+  )
+
+# ---- Plot ----
+ggplot(avg_seating_trend,
+       aes(x = census_year, y = avg_seats_per_business, color = industry_plot)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2.2) +
+  labs(
+    title = "Average Seating per Business Over Time",
+    subtitle = "Comparison between Restaurant (Cafes) and Takeaway industries",
+    x = "Census Year",
+    y = "Average Number of Seats per Business",
+    color = "Industry"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+
+
+```
+
+
+
 
 
 
@@ -2929,23 +2854,122 @@ p_final
 ```{r}
 
 
-library(tidyverse)
-library(cluster)      
-library(factoextra)   
-library(ggdendro)     
-library(patchwork)    
-library(scales)
+# 1) Load street data (time series by census_year)
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
+  filter(start_year_filter == TRUE)
+
+# 2) Collapse to ONE ROW PER BUSINESS
+#    (take the latest census snapshot for each business_id)
+biz <- df %>%
+  group_by(business_id) %>%
+  slice_max(census_year, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# 3) (Optional, recommended) remove bias: keep only unbiased rows
+#    i.e., closed businesses + long-lived (>12 yrs) per your rule
+biz <- biz %>% filter(bias_filter == FALSE)
+
+# 4) Keep the two industries and prep labels
+biz2 <- biz %>%
+  filter(industry %in% c("Cafes", "Takeaway")) %>%
+  mutate(
+    Industry = recode(industry,
+                      "Cafes"    = "Restaurant",
+                      "Takeaway" = "Takeaway")
+  ) %>%
+  # ensure clean target variable
+  filter(!is.na(lifespan_years), lifespan_years >= 0)
+
+# 5) Violin plot (with boxplot + median dot)
+ggplot(biz2, aes(x = Industry, y = lifespan_years, fill = Industry)) +
+  geom_violin(trim = TRUE, alpha = 0.85) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.6) +
+  stat_summary(fun = median, geom = "point", size = 2.5, color = "black") +
+  labs(
+    title = "Distribution of Business Lifespan by Industry",
+    subtitle = "Each business counted once (latest census record), bias-corrected sample",
+    x = NULL, y = "Lifespan (years)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"))
+
+```
+
+```{r}
+
+
+# 1️⃣ Load data
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
+  filter(start_year_filter == TRUE)
+
+# 2️⃣ Keep one record per business (latest census year, bias-filtered)
+biz_unique <- df %>%
+  group_by(business_id) %>%
+  slice_max(census_year, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  filter(bias_filter == FALSE)
+
+# 3️⃣ Select only Cafes and Takeaway
+lifespan_by_area <- biz_unique %>%
+  filter(industry %in% c("Cafes", "Takeaway")) %>%
+  mutate(
+    Industry = recode(industry,
+                      "Cafes" = "Restaurant",
+                      "Takeaway" = "Takeaway"),
+    CLUE_Area = clue_area
+  ) %>%
+  filter(!is.na(lifespan_years) & !is.na(CLUE_Area)) %>%
+  mutate(
+    # ✅ Updated lifespan grouping
+    lifespan_group = case_when(
+      lifespan_years <= 3  ~ "0–3 yrs",
+      lifespan_years <= 6  ~ "4–6 yrs",
+      lifespan_years <= 9  ~ "7–9 yrs",
+      lifespan_years <= 12 ~ "10–12 yrs",
+      TRUE ~ ">12 yrs"
+    ),
+    lifespan_group = factor(lifespan_group,
+                            levels = c("0–3 yrs", "4–6 yrs", "7–9 yrs", "10–12 yrs", ">12 yrs"))
+  ) %>%
+  group_by(CLUE_Area, Industry, lifespan_group) %>%
+  summarise(Count = n(), .groups = "drop")
+
+# 4️⃣ Plot with ordered x-axis
+ggplot(lifespan_by_area, aes(x = lifespan_group, y = Count, fill = Industry)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ CLUE_Area, scales = "free_y") +
+  labs(
+    title = "Business Lifespan Distribution by CLUE Area",
+    subtitle = "Restaurants vs Takeaway Food Services",
+    x = "Lifespan Group",
+    y = "Number of Businesses",
+    fill = "Industry"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+```
+
+```{r}
+
 
 
 
 # Load data
 df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
 
+# Bias-free cohort (closed OR veteran) AND valid start (first_seen > 2002 OR veteran)
 df_analysis <- df_full %>%
-  filter(!bias_filter) %>%
+  filter(bias_filter == FALSE, start_year_filter == TRUE) %>%   # ← add this condition
+  arrange(business_id, census_year) %>%
   group_by(business_id) %>%
-  slice_head(n = 1) %>%
+  slice_head(n = 1) %>%   # first observation per business
   ungroup()
+
 
 
 # CLUE AREA CLUSTERING
@@ -3217,7 +3241,7 @@ street_metrics <- df_analysis %>%
     
     .groups = "drop"
   ) %>%
-  filter(n_businesses >= 5) %>%  # Only streets with sufficient history
+  filter(n_businesses >= 4) %>%  # Only streets with sufficient history
   mutate(
     # CREATE UNIQUE ID: street_area combination
     street_id = paste0(street_address, " (", clue_area, ")")
@@ -3514,10 +3538,12 @@ ggsave("clustering_streets_analysis.png", p_street_combined,
 
 
 
+ggsave("pca.png", p_pca,
+       width = 12, height = 10, dpi = 300, bg = "white")
 
 
-
-
+ggsave("cluster.png", p_street_scatter,
+       width = 12, height = 10, dpi = 300, bg = "white")
 
 p_pca
 
@@ -3539,77 +3565,1751 @@ p_street_dist
 
 
 
- Melbourne CBD Is NOT Uniform
-Visualization shows CBD scattered across multiple tiers:
 
-Some CBD streets are Bronze (survivable with competition)
-Many CBD streets are Avoid (death traps!)
-Very few CBD streets are Gold/Silver
+```{r}
 
 
-  PCA Plot (middle):
+# 1) Area scatter with interpretable axes (mirrors street plot)
+p_area_scatter <- ggplot(area_metrics,
+  aes(x = mean_total_comp, y = success_rate,
+      color = tier, size = n_businesses, label = clue_area)) +
+  geom_point(alpha = 0.8) +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 50, seed = 42, show.legend = FALSE) +
+  scale_color_brewer(palette = "Set1") +
+  scale_size_continuous(range = c(3, 9), name = "Businesses") +
+  labs(
+    title = "CLUE Area Performance: Success Rate vs Competition",
+    subtitle = "Color = cluster tier (k-means) | Size = # of businesses",
+    x = "Average Competition (200m radius)",
+    y = "Success Rate (%)",
+    color = "Tier"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "right")
 
-Melbourne CBD is isolated far right (unique characteristics)
-Tier 1 (red) clusters together (similar performance profiles)
-Tier 3 (green) clusters bottom-right (distinct from prime areas)
+ggsave("clue_areas_competition_vs_success.png", p_area_scatter,
+       width = 12, height = 9, dpi = 300, bg = "white")
 
-  Heatmap (bottom):
+# 2) (Optional) Alternative: Competition vs Mean Lifespan
+p_area_scatter_life <- ggplot(area_metrics,
+  aes(x = mean_total_comp, y = mean_lifespan,
+      color = tier, size = n_businesses, label = clue_area)) +
+  geom_point(alpha = 0.8) +
+  ggrepel::geom_text_repel(size = 3, max.overlaps = 50, seed = 42, show.legend = FALSE) +
+  scale_color_brewer(palette = "Set1") +
+  scale_size_continuous(range = c(3, 9), name = "Businesses") +
+  labs(
+    title = "CLUE Area Performance: Lifespan vs Competition",
+    subtitle = "Color = cluster tier (k-means) | Size = # of businesses",
+    x = "Average Competition (200m radius)",
+    y = "Mean Lifespan (years)",
+    color = "Tier"
+  ) +
+  theme_minimal(base_size = 11)
 
-Tier 1 has GREEN across all metrics except competition (intentionally low)
-CBD has high competition (109) dragging down other metrics
-Tier 3 shows mixed performance (some good, some bad)
-
-
-
-
-   Dendrogram
-Shows hierarchical relationships:
-
-CBD is very distant from all others (branches high up)
-Carlton & North Melbourne are similar (branch together)
-Docklands & Parkville are similar (both challenging)
-
-
-
-   Street Clustering
-Top scatter plot:
-
-Gold streets (yellow) cluster at low competition + high success
-Avoid streets (dark red) cluster at moderate competition + 0% success
-Most streets are Copper/Bronze (middle mass)
-
-Bottom bar chart:
-
-Copper streets dominate (40 out of 105) - most streets are mediocre
-Only 6 Gold streets - rarity!
-11 Avoid streets - clear death traps
-
-
-
-   For New Restaurant Location:
-
-TIER 1 RECOMMENDATION
-
-Target Areas: Carlton, North Melbourne, Southbank (NOT CBD!)
-Target Streets: Faraday St (Carlton), Macaulay Rd (North Melbourne)
-Expected Success: 25-40%
-Rationale: Established dining scenes, manageable competition
-
-TIER 2 OPTION (High Risk/Reward)
-
-Area: Melbourne CBD
-Streets: Victoria St (Gold), Market Lane (Gold)
-Expected Success: 17-50% (street-dependent!)
-Rationale: Avoid Bronze/Avoid tier CBD streets, target Gold only
+ggsave("clue_areas_competition_vs_lifespan.png", p_area_scatter_life,
+       width = 12, height = 9, dpi = 300, bg = "white")
 
 
 
-AVOID
+p_area_scatter_life
 
-Areas: Docklands (except Rakaia Way), Parkville, Kensington
-Streets: Rose Lane, Spencer St, Docklands Drive, Hardware St
-Expected Success: <10%
-Rationale: Historical failure rates near 100%
+```
+
+
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(scales)
+library(survival)
+library(survminer)
+library(tidyr)
+
+
+# LOAD AND PREPARE DATA
+
+
+
+df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+# Get completed lifecycles only (bias-free sample)
+df_analysis <- df_full %>%
+ filter(bias_filter == FALSE, start_year_filter == TRUE) %>%  
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  mutate(
+    # Log transformation for size
+    log_seats = log1p(num_seats),
+    
+    # Success indicator
+    success = (lifespan_group == ">12 yrs"),
+    
+    # Business age categories
+    age_category = case_when(
+      lifespan_years <= 3 ~ "Early (1-3 yrs)",
+      lifespan_years <= 8 ~ "Established (4-8 yrs)",
+      lifespan_years <= 12 ~ "Mature (9-12 yrs)",
+      TRUE ~ "Veteran (>12 yrs)"
+    ),
+    age_category = factor(age_category, levels = c("Early (1-3 yrs)", "Established (4-8 yrs)", 
+                                                     "Mature (9-12 yrs)", "Veteran (>12 yrs)")),
+    
+    # Era categories
+    era = case_when(
+      census_year <= 2008 ~ "Pre-GFC (2002-2008)",
+      census_year <= 2015 ~ "Recovery (2009-2015)",
+      TRUE ~ "Modern (2016-2023)"
+    ),
+    
+    # Competition levels
+    comp_level = ifelse(other_industry_200m > median(other_industry_200m, na.rm=TRUE), 
+                       "High Competition", "Low Competition"),
+    
+    # Size levels
+    size_level = ifelse(num_seats > median(num_seats, na.rm=TRUE), 
+                       "Large (>median)", "Small (≤median)")
+  )
+
+
+# Standardize features function
+standardize_features <- function(df) {
+  df %>%
+    mutate(
+      same_ind_std = scale(same_industry_200m)[,1],
+      other_ind_std = scale(other_industry_200m)[,1],
+      log_seats_std = scale(log_seats)[,1],
+      foottraffic_std = scale(avg_daily_foottraffic)[,1]
+    )
+}
+
+df_std <- standardize_features(df_analysis)
+
+# Load street clustering and add street quality indicators to main dataset
+street_clusters <- read_csv("clustering_streets.csv", show_col_types = FALSE)
+
+df_std <- df_std %>%
+  left_join(street_clusters %>% select(street_address, street_tier), 
+            by = "street_address") %>%
+  mutate(
+    # Create best/worst street indicators
+    on_best_street = as.numeric(street_tier %in% c("Gold Streets", "Silver Streets")),
+    on_worst_street = as.numeric(street_tier %in% c("Copper Streets", "Avoid Streets"))
+  )
+
+# Create subset with valid street data for street-specific analyses
+df_streets <- df_std %>%
+  filter(!is.na(street_tier))
+
+
+# ANALYSIS 1: GOOD VS POOR STREETS
+
+
+
+
+# Define good vs poor streets (already have street_tier from earlier merge)
+df_good_poor <- df_streets %>%
+  mutate(
+    street_quality = case_when(
+      street_tier %in% c("Gold Streets") ~ "Prime Streets",
+      street_tier %in% c("Copper Streets") ~ "Poor Streets",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(street_quality))
+
+
+
+# Function to create comparison plots
+create_street_comparison <- function(data, x_var, x_label, title_prefix) {
+  
+  # Calculate correlations by street quality
+  cor_prime <- cor(data %>% filter(street_quality == "Prime Streets") %>% pull({{x_var}}),
+                   data %>% filter(street_quality == "Prime Streets") %>% pull(lifespan_years),
+                   use = "complete.obs")
+  
+  cor_poor <- cor(data %>% filter(street_quality == "Poor Streets") %>% pull({{x_var}}),
+                  data %>% filter(street_quality == "Poor Streets") %>% pull(lifespan_years),
+                  use = "complete.obs")
+  
+  ggplot(data, aes(x = {{x_var}}, y = lifespan_years, color = street_quality)) +
+    geom_point(alpha = 0.3, size = 0.8) +
+    geom_smooth(method = "lm", se = TRUE, size = 1.2) +
+    scale_color_manual(values = c("Prime Streets" = "#27ae60", "Poor Streets" = "#e74c3c")) +
+    annotate("text", x = -Inf, y = Inf, 
+             label = paste0("Prime: r=", round(cor_prime, 3), "\nPoor: r=", round(cor_poor, 3)),
+             hjust = -0.1, vjust = 1.2, size = 3, fontface = "bold") +
+    labs(title = paste(title_prefix, "by Street Quality"),
+         x = x_label, y = "Lifespan (years)",
+         color = "Street Quality") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "bottom",
+          plot.title = element_text(face = "bold", size = 11))
+}
+
+p1_streets <- create_street_comparison(df_good_poor, same_ind_std, 
+                                       "Same-Industry Competition", "A. Same-Industry")
+p2_streets <- create_street_comparison(df_good_poor, other_ind_std, 
+                                       "Other-Industry Competition", "B. Other-Industry")
+p3_streets <- create_street_comparison(df_good_poor, log_seats_std, 
+                                       "log(Seats)", "C. Restaurant Size")
+p4_streets <- create_street_comparison(df_good_poor %>% filter(!is.na(foottraffic_std)), 
+                                       foottraffic_std, "Pedestrians/day", "D. Foot Traffic")
+
+p_streets_final <- (p1_streets | p2_streets) / (p3_streets | p4_streets) +
+  plot_annotation(
+    title = "Feature Effects: Prime vs Poor Streets",
+    subtitle = "Do success factors work differently on good vs bad streets?",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("analysis1_good_vs_poor_streets.png", p_streets_final, 
+       width = 14, height = 10, dpi = 300, bg = "white")
+
+
+
+# Print insights
+cat("KEY INSIGHTS:\n")
+cor_diff_comp <- cor(df_good_poor %>% filter(street_quality == "Poor Streets") %>% 
+                    pull(other_ind_std), 
+                    df_good_poor %>% filter(street_quality == "Poor Streets") %>% 
+                    pull(lifespan_years), use = "complete.obs") -
+                cor(df_good_poor %>% filter(street_quality == "Prime Streets") %>% 
+                    pull(other_ind_std), 
+                    df_good_poor %>% filter(street_quality == "Prime Streets") %>% 
+                    pull(lifespan_years), use = "complete.obs")
+
+cat("  Competition hurts", ifelse(cor_diff_comp < 0, "MORE", "LESS"), 
+    "on poor streets (Δr =", round(cor_diff_comp, 3), ")\n\n")
+
+
+# ANALYSIS 2: BY CLUE AREA
+
+
+# Load CLUE area clustering
+clue_clusters <- read_csv("clustering_clue_areas.csv", show_col_types = FALSE)
+
+# Select top 4 areas by sample size
+top_areas <- df_std %>%
+  count(clue_area, sort = TRUE) %>%
+  head(4) %>%
+  pull(clue_area)
+
+df_areas <- df_std %>%
+  filter(clue_area %in% top_areas)
+
+cat("Top 4 CLUE areas:\n")
+print(df_areas %>% count(clue_area, sort = TRUE))
+cat("\n")
+
+# Create small multiples for each feature
+create_area_plot <- function(data, x_var, x_label, title) {
+  
+  # Calculate correlations by area
+  cors <- data %>%
+    group_by(clue_area) %>%
+    summarise(
+      r = cor({{x_var}}, lifespan_years, use = "complete.obs"),
+      .groups = "drop"
+    )
+  
+  ggplot(data, aes(x = {{x_var}}, y = lifespan_years, color = clue_area)) +
+    geom_point(alpha = 0.2, size = 0.5) +
+    geom_smooth(method = "lm", se = FALSE, size = 1) +
+    facet_wrap(~clue_area, ncol = 2) +
+    scale_color_brewer(palette = "Set1") +
+    labs(title = title, x = x_label, y = "Lifespan (years)") +
+    theme_minimal(base_size = 9) +
+    theme(legend.position = "none",
+          plot.title = element_text(face = "bold", size = 10),
+          strip.text = element_text(face = "bold"))
+}
+
+p1_areas <- create_area_plot(df_areas, same_ind_std, 
+                             "Same-Industry Competition", "A. Same-Industry by Area")
+p2_areas <- create_area_plot(df_areas, other_ind_std, 
+                             "Other-Industry Competition", "B. Other-Industry by Area")
+p3_areas <- create_area_plot(df_areas, log_seats_std, 
+                             "log(Seats)", "C. Size by Area")
+p4_areas <- create_area_plot(df_areas %>% filter(!is.na(foottraffic_std)), 
+                             foottraffic_std, "Pedestrians/day", "D. Foot Traffic by Area")
+
+p_areas_final <- (p1_areas | p2_areas) / (p3_areas | p4_areas) +
+  plot_annotation(
+    title = "Feature Effects by CLUE Area",
+    subtitle = "Different neighborhoods, different rules?",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("analysis2_by_clue_area.png", p_areas_final, 
+       width = 14, height = 12, dpi = 300, bg = "white")
+
+
+# ANALYSIS 3: BUSINESS LIFECYCLE STAGE
+
+
+
+# Calculate average lifespan and correlations by stage
+lifecycle_summary <- df_std %>%
+  group_by(age_category) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years),
+    cor_comp = cor(other_ind_std, lifespan_years, use = "complete.obs"),
+    cor_size = cor(log_seats_std, lifespan_years, use = "complete.obs"),
+    .groups = "drop"
+  )
+
+# Plot: Average lifespan by stage (sanity check)
+p1_lifecycle <- ggplot(lifecycle_summary, aes(x = age_category, y = avg_lifespan, fill = age_category)) +
+  geom_col(alpha = 0.8) +
+  geom_text(aes(label = round(avg_lifespan, 1)), vjust = -0.5, fontface = "bold") +
+  scale_fill_brewer(palette = "RdYlGn") +
+  labs(title = "A. Average Lifespan by Stage",
+       x = NULL, y = "Average Lifespan (years)") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Plot: Competition effect by stage
+p2_lifecycle <- ggplot(lifecycle_summary, aes(x = age_category, y = cor_comp, fill = age_category)) +
+  geom_col(alpha = 0.8) +
+  geom_text(aes(label = round(cor_comp, 3)), vjust = -0.5, fontface = "bold") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_fill_brewer(palette = "RdYlGn") +
+  labs(title = "B. Competition Effect by Stage",
+       x = NULL, y = "Correlation with Lifespan") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Plot: Size effect by stage
+p3_lifecycle <- ggplot(lifecycle_summary, aes(x = age_category, y = cor_size, fill = age_category)) +
+  geom_col(alpha = 0.8) +
+  geom_text(aes(label = round(cor_size, 3)), vjust = -0.5, fontface = "bold") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_fill_brewer(palette = "RdYlGn") +
+  labs(title = "C. Size Effect by Stage",
+       x = NULL, y = "Correlation with Lifespan") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 20, hjust = 1))
+
+# Scatter: Competition by stage
+p4_lifecycle <- ggplot(df_std, aes(x = other_ind_std, y = lifespan_years, color = age_category)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_brewer(palette = "RdYlGn") +
+  labs(title = "D. Competition Effects Across Stages",
+       x = "Other-Industry Competition", y = "Lifespan (years)",
+       color = "Stage") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+
+p_lifecycle_final <- (p1_lifecycle | p2_lifecycle) / (p3_lifecycle | p4_lifecycle) +
+  plot_annotation(
+    title = "Business Lifecycle Stage Analysis",
+    subtitle = "What matters in Year 1 vs Year 10?",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("analysis3_lifecycle_stages.png", p_lifecycle_final, 
+       width = 14, height = 10, dpi = 300, bg = "white")
+
+
+
+
+# ANALYSIS 4: INTERACTION EFFECTS
+
+
+# Interaction 1: Competition × Size
+interaction1 <- df_std %>%
+  filter(!is.na(comp_level), !is.na(size_level)) %>%
+  group_by(comp_level, size_level) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years),
+    success_rate = mean(success) * 100,
+    .groups = "drop"
+  )
+
+p1_interact <- ggplot(interaction1, aes(x = comp_level, y = size_level, fill = avg_lifespan)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs\n(%d)", avg_lifespan, n)), 
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_std$lifespan_years)) +
+  labs(title = "A. Competition × Size Interaction",
+       x = "Competition Level", y = "Restaurant Size",
+       fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Interaction 2: Competition × Street Quality
+interaction2 <- df_good_poor %>%
+  group_by(comp_level, street_quality) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years),
+    .groups = "drop"
+  )
+
+p2_interact <- ggplot(interaction2, aes(x = comp_level, y = street_quality, fill = avg_lifespan)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs\n(%d)", avg_lifespan, n)), 
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_good_poor$lifespan_years)) +
+  labs(title = "B. Competition × Street Quality",
+       x = "Competition Level", y = "Street Quality",
+       fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Interaction 3: Size × Street Quality
+interaction3 <- df_good_poor %>%
+  group_by(size_level, street_quality) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years),
+    .groups = "drop"
+  )
+
+p3_interact <- ggplot(interaction3, aes(x = size_level, y = street_quality, fill = avg_lifespan)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs\n(%d)", avg_lifespan, n)), 
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_good_poor$lifespan_years)) +
+  labs(title = "C. Size × Street Quality",
+       x = "Restaurant Size", y = "Street Quality",
+       fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Line plot showing interaction visually
+p4_interact <- ggplot(interaction1, aes(x = comp_level, y = avg_lifespan, 
+                                        color = size_level, group = size_level)) +
+  geom_line(size = 1.5) +
+  geom_point(size = 3) +
+  geom_text(aes(label = round(avg_lifespan, 1)), 
+            vjust = -1, fontface = "bold", size = 3.5) +
+  scale_color_manual(values = c("Large (>median)" = "#27ae60", 
+                                 "Small (≤median)" = "#e74c3c")) +
+  labs(title = "D. Does Size Buffer Competition?",
+       x = "Competition Level", y = "Average Lifespan (years)",
+       color = "Size") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+
+p_interact_final <- (p1_interact | p2_interact) / (p3_interact | p4_interact) +
+  plot_annotation(
+    title = "Interaction Effects: Do Factors Work Together?",
+    subtitle = "Testing if size/location can buffer competition effects",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("analysis4_interactions.png", p_interact_final, 
+       width = 14, height = 10, dpi = 300, bg = "white")
+
+
+
+
+# ANALYSIS 5: OPTIMAL RANGE ANALYSIS
+
+
+
+
+# Function to create decile analysis
+create_decile_plot <- function(data, var, var_label, title) {
+  data %>%
+    filter(!is.na({{var}})) %>%
+    mutate(decile = ntile({{var}}, 10)) %>%
+    group_by(decile) %>%
+    summarise(
+      n = n(),
+      avg_value = mean({{var}}, na.rm = TRUE),
+      avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+      success_rate = mean(success, na.rm = TRUE) * 100,
+      .groups = "drop"
+    ) %>%
+    ggplot(aes(x = decile, y = avg_lifespan)) +
+    geom_line(color = "#3498db", size = 1.5) +
+    geom_point(size = 3, color = "#3498db") +
+    geom_hline(yintercept = mean(data$lifespan_years, na.rm = TRUE), 
+               linetype = "dashed", color = "red") +
+    scale_x_continuous(breaks = 1:10) +
+    labs(title = title,
+         x = paste(var_label, "Decile (1=lowest, 10=highest)"),
+         y = "Average Lifespan (years)") +
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(face = "bold"))
+}
+
+p1_optimal <- create_decile_plot(df_std, num_seats, "Restaurant Size", 
+                                 "A. Size Sweet Spot (Inverted-U?)")
+p2_optimal <- create_decile_plot(df_std, other_industry_200m, "Other-Industry Competition", 
+                                 "B. Competition Effect (Linear Decline?)")
+p3_optimal <- create_decile_plot(df_std, same_industry_200m, "Same-Industry Competition", 
+                                 "C. Same-Industry Effect")
+p4_optimal <- create_decile_plot(df_std %>% filter(!is.na(avg_daily_foottraffic)), 
+                                 avg_daily_foottraffic, "Foot Traffic", 
+                                 "D. Foot Traffic Effect")
+
+p_optimal_final <- (p1_optimal | p2_optimal) / (p3_optimal | p4_optimal) +
+  plot_annotation(
+    title = "Optimal Range Analysis: Finding Sweet Spots",
+    subtitle = "Red line = overall average | Looking for non-linear patterns",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("analysis5_optimal_ranges.png", p_optimal_final, 
+       width = 14, height = 10, dpi = 300, bg = "white")
+
+
+
+
+# ANALYSIS 6: SUCCESS PROFILE (12+ YEAR SURVIVORS)
+
+
+
+
+
+# Compare successful vs failed businesses
+success_profile <- df_std %>%
+  mutate(outcome = case_when(
+    lifespan_years <= 3 ~ "Failed (<3 yrs)",
+    lifespan_years > 12 ~ "Success (>12 yrs)",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(outcome)) %>%
+  group_by(outcome) %>%
+  summarise(
+    n = n(),
+    avg_same_comp = mean(same_industry_200m, na.rm = TRUE),
+    avg_other_comp = mean(other_industry_200m, na.rm = TRUE),
+    avg_seats = mean(num_seats, na.rm = TRUE),
+    pct_cbd = mean(clue_area == "Melbourne (CBD)", na.rm = TRUE) * 100,
+    pct_cafe = mean(industry == "Cafes", na.rm = TRUE) * 100,
+    .groups = "drop"
+  )
+
+# Replace NA values with 0 for percentage calculations
+success_profile <- success_profile %>%
+  mutate(across(starts_with("pct_"), ~replace_na(., 0)))
+
+
+print(success_profile)
+
+
+# Reshape for plotting
+success_long <- success_profile %>%
+  select(-n) %>%
+  pivot_longer(-outcome, names_to = "metric", values_to = "value") %>%
+  mutate(
+    metric_clean = case_when(
+      metric == "avg_same_comp" ~ "Same-Industry\nCompetition",
+      metric == "avg_other_comp" ~ "Other-Industry\nCompetition",
+      metric == "avg_seats" ~ "Restaurant\nSize (seats)",
+      metric == "pct_cbd" ~ "% in CBD",
+      metric == "pct_cafe" ~ "% Cafes",
+      TRUE ~ metric
+    )
+  )
+
+# Plot: Success vs Failed comparison
+p_success <- ggplot(success_long, aes(x = metric_clean, y = value, fill = outcome)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = round(value, 1)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, size = 3, fontface = "bold") +
+  scale_fill_manual(values = c("Failed (<3 yrs)" = "#e74c3c", 
+                                "Success (>12 yrs)" = "#27ae60")) +
+  labs(title = "Success Profile: What Do Long-Term Survivors Have in Common?",
+       subtitle = paste0("Comparing ", success_profile$n[1], " failed businesses vs ", 
+                        success_profile$n[2], " successful businesses"),
+       x = NULL, y = "Value",
+       fill = "Outcome") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 0, hjust = 0.5, size = 9))
+
+ggsave("analysis6_success_profile.png", p_success, 
+       width = 14, height = 8, dpi = 300, bg = "white")
+
+
+
+# Calculate odds ratios
+odds_prime_success <- (success_profile$pct_prime_street[2] / (100 - success_profile$pct_prime_street[2])) /
+                      (success_profile$pct_prime_street[1] / (100 - success_profile$pct_prime_street[1]))
+
+
+
+
+# ANALYSIS 7: SURVIVAL CURVES BY STREET TIER
+
+
+
+
+
+
+# Prepare survival data
+df_survival <- df_streets %>%
+  filter(!is.na(street_tier)) %>%
+  mutate(
+    # Event indicator (1 = observed death, 0 = censored)
+    event = 1,  # All are completed lifecycles, so all died
+    time = lifespan_years
+  )
+
+cat("Sample sizes by street tier:\n")
+print(df_survival %>% count(street_tier))
+cat("\n")
+
+# Create survival object
+surv_obj <- Surv(time = df_survival$time, event = df_survival$event)
+
+# Fit survival curves by street tier
+fit_streets <- survfit(surv_obj ~ street_tier, data = df_survival)
+
+# Plot survival curves
+p_survival <- ggsurvplot(
+  fit_streets,
+  data = df_survival,
+  conf.int = TRUE,
+  risk.table = FALSE,
+  pval = TRUE,
+  pval.coord = c(0, 0.1),
+  palette = c("Gold Streets" = "#FFD700",
+              "Silver Streets" = "#C0C0C0",
+              "Bronze Streets" = "#CD7F32",
+              "Copper Streets" = "#B87333",
+              "Avoid Streets" = "#8B0000"),
+  legend.title = "Street Tier",
+  legend.labs = levels(factor(df_survival$street_tier)),
+  xlab = "Years in Business",
+  ylab = "Survival Probability",
+  title = "Survival Curves by Street Tier",
+  subtitle = "How long do restaurants survive on different street tiers?",
+  ggtheme = theme_minimal(base_size = 12),
+  font.main = c(16, "bold"),
+  font.subtitle = c(11, "plain"),
+  font.x = c(12, "plain"),
+  font.y = c(12, "plain")
+)
+
+# Save survival plot
+ggsave("analysis7_survival_curves.png", print(p_survival), 
+       width = 12, height = 8, dpi = 300, bg = "white")
+
+
+# Calculate median survival times
+median_survival <- summary(fit_streets)$table[, "median"]
+
+print(median_survival)
+
+
+
+
+
+
+
+# Display all plots
+print(p_streets_final)
+print(p_areas_final)
+print(p_lifecycle_final)
+print(p_interact_final)
+print(p_optimal_final)
+print(p_success)
+print(p_survival)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### traditional RM
+```{r}
+
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(ranger)      
+library(patchwork)
+library(scales)
+
+
+
+
+df_shiny <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE)
+df_full  <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+#  Select only columns needed for merging
+filter_info <- df_full %>%
+  select(business_id, start_year_filter) %>%
+  distinct()
+
+#  Join the new filter into the Shiny dataset
+df_shiny_updated <- df_shiny %>%
+  left_join(filter_info, by = "business_id")%>%
+  mutate(start_year_filter = replace_na(start_year_filter, FALSE))
+
+#  Sanity check — make sure row count remains the same
+stopifnot(nrow(df_shiny_updated) == nrow(df_shiny))
+
+#  Save updated dataset
+write_csv(df_shiny_updated, "df_clean_200m_shinny.csv")
+
+
+# STEP 1: LOAD AND PREPARE DATA
+
+
+# Load modeling data
+df_model <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE)%>%
+
+dplyr::filter(start_year_filter == TRUE)
+
+cat("Dataset loaded:\n")
+cat("  Rows:", nrow(df_model), "\n")
+cat("  Features:", ncol(df_model) - 2, "(excluding business_id and target)\n\n")
+
+# Remove business_id (not a predictor)
+df_features <- df_model %>%
+  dplyr::select(-business_id,-on_best_street,-on_worst_street, start_year_filter)
+
+# Check for missing values
+na_summary <- colSums(is.na(df_features))
+if (sum(na_summary) > 0) {
+  cat("⚠ WARNING: Missing values detected:\n")
+  print(na_summary[na_summary > 0])
+  cat("\nRemoving rows with missing values...\n")
+  df_features <- na.omit(df_features)
+}
+
+cat("Final dataset:\n")
+cat("  Complete cases:", nrow(df_features), "\n")
+cat("  Target variable: lifespan_numeric\n")
+cat("  Range:", min(df_features$lifespan_numeric), "-", 
+    max(df_features$lifespan_numeric), "years\n\n")
+
+
+# STEP 2: TRAIN/TEST SPLIT (80/20)
+
+
+
+
+set.seed(42)
+train_index <- createDataPartition(
+  df_features$lifespan_numeric, 
+  p = 0.80,           # 80% training
+  list = FALSE,
+  times = 1
+)
+
+df_train <- df_features[train_index, ]
+df_test <- df_features[-train_index, ]
+
+
+
+# STEP 3: FEATURE STANDARDIZATION (FOR COMPARISON)
+
+
+# Identify numeric features (exclude target)
+numeric_features <- df_train %>%
+  dplyr::select(-lifespan_numeric) %>%
+  dplyr::select(where(is.numeric)) %>%
+  names()
+
+
+
+# Calculate standardization parameters from TRAINING set only
+preproc_params <- preProcess(
+  df_train[, numeric_features], 
+  method = c("center", "scale")
+)
+
+# Apply to both train and test
+df_train_scaled <- df_train
+df_train_scaled[, numeric_features] <- predict(
+  preproc_params, 
+  df_train[, numeric_features]
+)
+
+df_test_scaled <- df_test
+df_test_scaled[, numeric_features] <- predict(
+  preproc_params, 
+  df_test[, numeric_features]
+)
+
+
+# STEP 4: CROSS-VALIDATION SETUP
+
+
+# 5-fold CV with consistent folds
+set.seed(42)
+cv_folds <- createFolds(
+  df_train$lifespan_numeric, 
+  k = 5, 
+  returnTrain = TRUE
+)
+
+cv_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  savePredictions = "final",
+  index = cv_folds,
+  allowParallel = TRUE  # Enable parallel processing if available
+)
+
+
+# STEP 5: HYPERPARAMETER TUNING GRID
+
+
+# Define tuning grid
+# For ranger (faster implementation)
+n_features <- ncol(df_train) - 1  # Exclude target
+
+tune_grid <- expand.grid(
+  mtry = c(3, 5, 7, 9, 11),                          # Features per split
+  splitrule = c("variance", "extratrees"),           # Splitting rule
+  min.node.size = c(5, 10, 20, 30)                   # Min samples per leaf
+)
+
+
+# STEP 6: TRAIN MODELS (NON-STANDARDIZED VS STANDARDIZED)
+
+# MODEL 1: Non-Standardized (Standard for Random Forest)
+
+
+
+
+set.seed(42)
+start_time_1 <- Sys.time()
+
+rf_model_raw <- train(
+  lifespan_numeric ~ .,
+  data = df_train,
+  method = "ranger",
+  trControl = cv_control,
+  tuneGrid = tune_grid,
+  num.trees = 500,
+  importance = "impurity",
+  num.threads = 4  # Adjust based on your CPU
+)
+
+elapsed_1 <- round(difftime(Sys.time(), start_time_1, units = "mins"), 1)
+
+cat("\n✓ Model 1 training complete (", elapsed_1, "minutes)\n\n")
+cat("Best hyperparameters (non-standardized):\n")
+print(rf_model_raw$bestTune)
+cat("\nCV Performance:\n")
+print(rf_model_raw$results %>% 
+        filter(
+          mtry == rf_model_raw$bestTune$mtry,
+          splitrule == rf_model_raw$bestTune$splitrule,
+          min.node.size == rf_model_raw$bestTune$min.node.size
+        ) %>%
+        dplyr::select(RMSE, Rsquared, MAE))
+
+
+# MODEL 2: Standardized Features (for comparison)
+
+
+
+set.seed(42)
+start_time_2 <- Sys.time()
+
+rf_model_scaled <- train(
+  lifespan_numeric ~ .,
+  data = df_train_scaled,
+  method = "ranger",
+  trControl = cv_control,
+  tuneGrid = tune_grid,
+  num.trees = 500,
+  importance = "impurity",
+  num.threads = 4
+)
+
+elapsed_2 <- round(difftime(Sys.time(), start_time_2, units = "mins"), 1)
+
+cat("\n✓ Model 2 training complete (", elapsed_2, "minutes)\n\n")
+cat("Best hyperparameters (standardized):\n")
+print(rf_model_scaled$bestTune)
+cat("\nCV Performance:\n")
+print(rf_model_scaled$results %>% 
+        filter(
+          mtry == rf_model_scaled$bestTune$mtry,
+          splitrule == rf_model_scaled$bestTune$splitrule,
+          min.node.size == rf_model_scaled$bestTune$min.node.size
+        ) %>%
+        dplyr::select(RMSE, Rsquared, MAE))
+
+
+# STEP 7: TEST SET EVALUATION
+
+
+
+# Predictions on test set
+pred_raw <- predict(rf_model_raw, df_test)
+pred_scaled <- predict(rf_model_scaled, df_test_scaled)
+
+# Calculate test metrics
+test_metrics <- tibble(
+  Model = c("Non-Standardized (RF Standard)", "Standardized (Comparison)"),
+  
+  `Test RMSE` = c(
+    RMSE(pred_raw, df_test$lifespan_numeric),
+    RMSE(pred_scaled, df_test$lifespan_numeric)
+  ),
+  
+  `Test MAE` = c(
+    MAE(pred_raw, df_test$lifespan_numeric),
+    MAE(pred_scaled, df_test$lifespan_numeric)
+  ),
+  
+  `Test R²` = c(
+    R2(pred_raw, df_test$lifespan_numeric),
+    R2(pred_scaled, df_test$lifespan_numeric)
+  ),
+  
+  `CV RMSE` = c(
+    min(rf_model_raw$results$RMSE),
+    min(rf_model_scaled$results$RMSE)
+  ),
+  
+  `CV R²` = c(
+    max(rf_model_raw$results$Rsquared),
+    max(rf_model_scaled$results$Rsquared)
+  )
+) %>%
+  mutate(
+    `Overfit Gap (CV-Test R²)` = `CV R²` - `Test R²`,
+    `RMSE Diff (CV-Test)` = `CV RMSE` - `Test RMSE`
+  )
+
+
+print(test_metrics, width = Inf)
+
+# Select best model
+best_model <- if (test_metrics$`Test R²`[1] >= test_metrics$`Test R²`[2]) {
+  cat("\n✓ WINNER: Non-Standardized model (as expected for Random Forest)\n")
+  rf_model_raw
+} else {
+  cat("\n✓ WINNER: Standardized model (unexpected!)\n")
+  rf_model_scaled
+}
+
+
+# STEP 8: FEATURE IMPORTANCE ANALYSIS
+
+
+
+
+# Extract variable importance
+importance_df <- varImp(best_model)$importance %>%
+  rownames_to_column("Feature") %>%
+  arrange(desc(Overall)) %>%
+  mutate(
+    Feature_Clean = case_when(
+      Feature == "same_ind" ~ "Same-Industry Competition (200m)",
+      Feature == "other_ind" ~ "Other-Industry Competition (200m)",
+      Feature == "log_seats" ~ "Restaurant Size (log seats)",
+      Feature == "on_best_street" ~ "Prime Location Street",
+      Feature == "on_worst_street" ~ "Poor Quality Street",
+      Feature == "property_competition" ~ "Property-Level Competition",
+      Feature == "industry_cafe" ~ "Cafe Business Model",
+      Feature == "outdoor_seating" ~ "Outdoor Seating",
+      Feature == "mixed_seating" ~ "Mixed Seating Type",
+      TRUE ~ str_to_title(str_replace_all(Feature, "_", " "))
+    ),
+    Rank = row_number()
+  )
+
+
+print(importance_df %>% 
+        head(15) %>% 
+        dplyr::select(Rank, Feature = Feature_Clean, Importance = Overall),
+      n = 15)
+
+
+# STEP 9: DIAGNOSTIC VISUALIZATIONS
+
+
+
+# Choose best predictions for plots
+best_pred <- if (test_metrics$`Test R²`[1] >= test_metrics$`Test R²`[2]) {
+  pred_raw
+} else {
+  pred_scaled
+}
+
+# Plot 1: Predicted vs Actual
+p1 <- data.frame(
+  actual = df_test$lifespan_numeric,
+  predicted = best_pred
+) %>%
+  ggplot(aes(x = actual, y = predicted)) +
+  geom_point(alpha = 0.4, color = "#3498db") +
+  geom_abline(slope = 1, intercept = 0, color = "#e74c3c", 
+              linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", color = "#2ecc71", fill = "#2ecc71", 
+              alpha = 0.2, se = TRUE) +
+  annotate("text", x = min(df_test$lifespan_numeric), 
+           y = max(best_pred),
+           label = paste0(
+             "Test R² = ", round(test_metrics$`Test R²`[1], 3), "\n",
+             "Test RMSE = ", round(test_metrics$`Test RMSE`[1], 2), " years\n",
+             "Test MAE = ", round(test_metrics$`Test MAE`[1], 2), " years"
+           ),
+           hjust = 0, vjust = 1, size = 4, fontface = "bold") +
+  labs(
+    title = "Model Performance: Predicted vs Actual Lifespan",
+    subtitle = "Test set evaluation (20% hold-out)",
+    x = "Actual Lifespan (years)",
+    y = "Predicted Lifespan (years)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Plot 2: Residuals
+residuals <- df_test$lifespan_numeric - best_pred
+
+p2 <- data.frame(
+  predicted = best_pred,
+  residuals = residuals
+) %>%
+  ggplot(aes(x = predicted, y = residuals)) +
+  geom_point(alpha = 0.4, color = "#9b59b6") +
+  geom_hline(yintercept = 0, color = "#e74c3c", linetype = "dashed", size = 1) +
+  geom_smooth(method = "loess", color = "#2ecc71", fill = "#2ecc71", 
+              alpha = 0.2, se = TRUE) +
+  labs(
+    title = "Residual Plot",
+    subtitle = "Check for systematic bias",
+    x = "Predicted Lifespan (years)",
+    y = "Residuals (Actual - Predicted)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Plot 3: Feature Importance (Top 15)
+p3 <- importance_df %>%
+  head(15) %>%
+  ggplot(aes(x = reorder(Feature_Clean, Overall), y = Overall)) +
+  geom_col(fill = "#3498db", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    title = "Feature Importance (Top 15)",
+    subtitle = "Based on reduction in node impurity",
+    x = NULL,
+    y = "Importance Score"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Plot 4: Hyperparameter Tuning Results
+p4 <- rf_model_raw$results %>%
+  ggplot(aes(x = mtry, y = Rsquared, color = factor(min.node.size))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~splitrule) +
+  scale_color_brewer(palette = "Set1", name = "Min Node Size") +
+  labs(
+    title = "Hyperparameter Tuning: R² vs mtry",
+    subtitle = "Across different split rules and node sizes",
+    x = "mtry (features per split)",
+    y = "Cross-Validation R²"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom")
+
+# Combine plots
+p_final <- (p1 | p2) / (p3 | p4) +
+  plot_annotation(
+    title = "Random Forest Model Diagnostics - Proper ML Workflow",
+    subtitle = paste0(
+      "5-Fold CV | Train/Test Split (80/20) | Hyperparameter Tuning | ",
+      nrow(df_train), " training samples | ", nrow(df_test), " test samples"
+    ),
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 18),
+      plot.subtitle = element_text(size = 12)
+    )
+  )
+
+# Save
+ggsave("rf_model_proper_workflow.png", p_final, 
+       width = 16, height = 12, dpi = 300, bg = "white")
+
+
+# STEP 10: FINAL MODEL SUMMARY & EXPORT
+
+
+
+
+best_test_metrics <- test_metrics %>% 
+  filter(`Test R²` == max(`Test R²`)) %>%
+  slice(1)
+
+
+
+# Baseline comparison
+baseline_rmse <- sqrt(mean((df_test$lifespan_numeric - mean(df_train$lifespan_numeric))^2))
+improvement <- (baseline_rmse - best_test_metrics$`Test RMSE`) / baseline_rmse * 100
+
+
+
+# Top 5 features
+
+top5 <- importance_df %>% head(5)
+for (i in 1:5) {
+  cat(sprintf("  %d. %-45s (Importance: %.1f)\n", 
+              i, top5$Feature_Clean[i], top5$Overall[i]))
+}
+
+
+# Save final model
+saveRDS(best_model, "rf_model_final_tuned.rds")
+saveRDS(preproc_params, "preprocessing_params.rds")
+
+
+
+# Export predictions
+predictions_export <- tibble(
+  actual_lifespan = df_test$lifespan_numeric,
+  predicted_lifespan = best_pred,
+  residual = residuals,
+  abs_error = abs(residuals)
+) %>%
+  arrange(desc(abs_error))
+
+write_csv(predictions_export, "rf_test_predictions.csv")
+
+
+# Export feature importance
+write_csv(importance_df, "rf_feature_importance.csv")
+
+
+# Display final plot
+
+p1
+p2
+p3
+p4
+
+p_final
+```
+
+
+
+
+
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(scales)
+
+
+# LOAD DATA
+
+
+df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+
+df_analysis <- df_full %>%
+  filter(bias_filter == FALSE, start_year_filter == TRUE) %>%  
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+
+# STANDARDIZE FEATURES (z-score: mean=0, sd=1)
+
+
+df_standardized <- df_analysis %>%
+  mutate(
+    # Standardize competition metrics
+    same_industry_std = scale(same_industry_200m)[,1],
+    other_industry_std = scale(other_industry_200m)[,1],
+    
+    # Standardize size (use log transformation THEN standardize)
+    log_seats = log1p(num_seats),
+    log_seats_std = scale(log_seats)[,1],
+    
+    # Standardize foot traffic
+    foottraffic_std = scale(avg_daily_foottraffic)[,1]
+  )
+
+# Check standardization
+
+
+
+
+# Filter for foot traffic analysis
+df_traffic_std <- df_standardized %>% filter(!is.na(foottraffic_std))
+
+
+# CALCULATE CORRELATIONS (same as before - correlation is scale-invariant)
+
+
+# Add use = "complete.obs" to handle NA values
+cor_same <- cor(df_standardized$same_industry_std, df_standardized$lifespan_years, 
+                use = "complete.obs")
+cor_other <- cor(df_standardized$other_industry_std, df_standardized$lifespan_years, 
+                 use = "complete.obs")
+cor_size <- cor(df_standardized$log_seats_std, df_standardized$lifespan_years, 
+                use = "complete.obs")
+cor_traffic <- cor(df_traffic_std$foottraffic_std, df_traffic_std$lifespan_years, 
+                   use = "complete.obs")
+
+# Linear models (use na.action to handle missing values)
+lm_same <- lm(lifespan_years ~ same_industry_std, 
+              data = df_standardized, na.action = na.exclude)
+lm_other <- lm(lifespan_years ~ other_industry_std, 
+               data = df_standardized, na.action = na.exclude)
+lm_size <- lm(lifespan_years ~ log_seats_std, 
+              data = df_standardized, na.action = na.exclude)
+lm_traffic <- lm(lifespan_years ~ foottraffic_std, 
+                 data = df_traffic_std, na.action = na.exclude)
+
+
+
+
+# CREATE STANDARDIZED PLOTS
+
+
+# Panel A: Same-Industry Competition (Standardized)
+p_same <- ggplot(df_standardized, aes(x = same_industry_std, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#3498db") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", size = 0.5) +
+  labs(title = "A. Same-Industry Competition",
+       subtitle = "Clear negative relationship → Keep in model",
+       x = "Competitors (200m)", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#27ae60"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel B: Other-Industry Competition (Standardized)
+p_other <- ggplot(df_standardized, aes(x = other_industry_std, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#1abc9c") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", size = 0.5) +
+  labs(title = "B. Other-Industry Competition",
+       subtitle = "Strong negative relationship → Keep in model",
+       x = "Competitors (200m)", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#27ae60"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel C: Restaurant Size (Log-transformed THEN Standardized)
+p_size <- ggplot(df_standardized, aes(x = log_seats_std, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#f39c12") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", size = 0.5) +
+  labs(title = "C. Restaurant Size",
+       subtitle = "Modest relationship (non-linear) → Keep in model",
+       x = "log(Seats)", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#f39c12"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+# Panel D: Foot Traffic (Standardized)
+p_traffic <- ggplot(df_traffic_std, aes(x = foottraffic_std, y = lifespan_years)) +
+  geom_point(alpha = 0.15, size = 1, color = "#95a5a6") +
+  geom_smooth(method = "lm", color = "#e74c3c", fill = "#e74c3c", 
+              alpha = 0.2, size = 1.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", size = 0.5) +
+  labs(title = "D. Foot Traffic (Pedestrian Count)",
+       subtitle = "No meaningful relationship → EXCLUDED from model",
+       x = "Pedestrians/day", y = "Lifespan (years)") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold", color = "#2c3e50"),
+        plot.subtitle = element_text(color = "#e74c3c"),
+        panel.border = element_rect(color = "gray80", fill = NA, size = 0.8))
+
+
+# COMBINE PLOTS
+
+
+p_final <- (p_same + p_other) / (p_size + p_traffic) +
+  plot_annotation(
+    title = "Feature comparison",
+    subtitle = paste0("Analysis of ", nrow(df_standardized), 
+                     " completed restaurants (unbiased sample) | All features standardized (μ=0, σ=1)"),
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 18),
+      plot.subtitle = element_text(size = 12, color = "gray30"),
+      plot.caption = element_text(size = 8, color = "gray50", hjust = 0, lineheight = 1.2)
+    )
+  )
+
+
+# SAVE PLOT
+
+
+ggsave("feature_comparison_4panel_STANDARDIZED.png", p_final,
+       width = 16, height = 12, dpi = 300, bg = "white")
+
+
+# SUMMARY STATISTICS
+
+
+summary_stats <- tibble(
+  Feature = c("Same-Industry Competition", "Other-Industry Competition", 
+              "Restaurant Size (log)", "Foot Traffic"),
+  `Original Mean` = c(
+    round(mean(df_standardized$same_industry_200m), 1),
+    round(mean(df_standardized$other_industry_200m), 1),
+    round(mean(df_standardized$log_seats), 2),
+    round(mean(df_standardized$avg_daily_foottraffic, na.rm=TRUE), 0)
+  ),
+  `Original SD` = c(
+    round(sd(df_standardized$same_industry_200m), 1),
+    round(sd(df_standardized$other_industry_200m), 1),
+    round(sd(df_standardized$log_seats), 2),
+    round(sd(df_standardized$avg_daily_foottraffic, na.rm=TRUE), 0)
+  ),
+  `Std Mean` = c(
+    round(mean(df_standardized$same_industry_std), 3),
+    round(mean(df_standardized$other_industry_std), 3),
+    round(mean(df_standardized$log_seats_std), 3),
+    round(mean(df_standardized$foottraffic_std, na.rm=TRUE), 3)
+  ),
+  `Std SD` = c(
+    round(sd(df_standardized$same_industry_std), 3),
+    round(sd(df_standardized$other_industry_std), 3),
+    round(sd(df_standardized$log_seats_std), 3),
+    round(sd(df_standardized$foottraffic_std, na.rm=TRUE), 3)
+  ),
+  Correlation = c(cor_same, cor_other, cor_size, cor_traffic)
+) %>%
+  mutate(Correlation = round(Correlation, 3))
+
+print(summary_stats)
+
+
+# Display plot
+print(p_final)
+
+p_final
+```
+
+
+
+
+
+```{r}
+
+library(tidyverse)
+library(patchwork)
+
+# Load & prep 
+df_full <- readr::read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+df_std <- df_full %>%
+  filter(bias_filter == FALSE, start_year_filter == TRUE)%>%              
+  group_by(business_id) %>% slice_head(n = 1) %>% ungroup() %>%
+  mutate(
+    # total competition = same + other
+    comp_total = coalesce(same_industry_200m, 0) + coalesce(other_industry_200m, 0),
+    # median splits
+    comp_level = if_else(
+      comp_total > median(comp_total, na.rm = TRUE), "High Competition", "Low Competition",
+      missing = NA_character_
+    ),
+    size_level = if_else(
+      num_seats > median(num_seats, na.rm = TRUE), "Large (>median)", "Small (≤median)",
+      missing = NA_character_
+    )
+  )
+
+# enforce 2-level order and drop NA competition rows for any plot
+df_std <- df_std %>%
+  mutate(
+    comp_level = factor(comp_level, levels = c("High Competition", "Low Competition")),
+    size_level = factor(size_level, levels = c("Large (>median)", "Small (≤median)"))
+  )
+
+df_noNAcomp <- df_std %>% filter(!is.na(comp_level))
+
+#  PANEL A: Competition × Size (unchanged design)
+interactionA <- df_noNAcomp %>%
+  filter(!is.na(size_level)) %>%
+  group_by(comp_level, size_level) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p1_interact <- ggplot(interactionA, aes(x = comp_level, y = size_level, fill = avg_lifespan)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs", avg_lifespan, n)),
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_noNAcomp$lifespan_years, na.rm = TRUE)) +
+  labs(title = "A. Competition × Size Interaction",
+       x = "Competition Level", y = "Restaurant Size", fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+#  Choose the two areas for Panels B/C 
+area_pair <- c("Carlton", "Docklands")
+
+df_area_pair <- df_noNAcomp %>%
+  filter(clue_area %in% area_pair) %>%
+  mutate(area_2 = factor(clue_area, levels = area_pair))   # lock order: Carlton, Docklands
+
+#  PANEL B: Competition × Area (2×2, NO NA column) 
+interactionB <- df_area_pair %>%
+  group_by(comp_level, area_2) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p2_interact <- ggplot(interactionB, aes(x = comp_level, y = area_2, fill = avg_lifespan)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs", avg_lifespan, n)),
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_area_pair$lifespan_years, na.rm = TRUE)) +
+  labs(title = "B. Competition × Area (Carlton vs Docklands)",
+       x = "Competition Level", y = "CLUE Area", fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+# PANEL C: Size × Area (2×2) 
+interactionC <- df_area_pair %>%
+  filter(!is.na(size_level)) %>%
+  group_by(size_level, area_2) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p3_interact <- ggplot(interactionC, aes(x = size_level, y = area_2, fill = avg_lifespan)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs", avg_lifespan, n)),
+            fontface = "bold", size = 4) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_area_pair$lifespan_years, na.rm = TRUE)) +
+  labs(title = "C. Size × Area (Carlton vs Docklands)",
+       x = "Restaurant Size", y = "CLUE Area", fill = "Avg Lifespan") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+#  PANEL D: Does Size Buffer Competition? 
+interactionD <- df_noNAcomp %>%
+  filter(!is.na(size_level)) %>%
+  group_by(comp_level, size_level) %>%
+  summarise(
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p4_interact <- ggplot(interactionD, aes(x = comp_level, y = avg_lifespan,
+                                        color = size_level, group = size_level)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 3) +
+  geom_text(aes(label = round(avg_lifespan, 1)),
+            vjust = -1, fontface = "bold", size = 3.5, show.legend = FALSE) +
+  scale_color_manual(values = c("Large (>median)" = "#27ae60", "Small (≤median)" = "#e74c3c")) +
+  labs(title = "D. Does Size Buffer Competition?",
+       x = "Competition Level", y = "Average Lifespan (years)", color = "Size") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+
+# save
+p_interact_final <- (p1_interact | p2_interact) / (p3_interact | p4_interact) +
+  plot_annotation(
+    title = "Interaction Effects: Do Factors Work Together?",
+    subtitle = "Panels B/C use Areas (Carlton vs Docklands). Competition = total competitors within 200m. Rows with missing competition are dropped.",
+    theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 11, hjust = 0.5))
+  )
+
+ggsave("interaction_4panel_AREA_competition_noNA.png",
+       p_interact_final, width = 14, height = 10, dpi = 300, bg = "white")
+
+p_interact_final
+
+
+```
+
+R² ≈ 0.12 confirms that your models are exploratory, focusing on direction and relative strength of effects, not predictive accuracy.
+
+
+
+
+
+
+
+
+```{r}
+
+
+
+p1_lifecycle
+
+p2_lifecycle
+
+p3_lifecycle
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
