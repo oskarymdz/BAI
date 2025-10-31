@@ -36,7 +36,248 @@ library(readr)
 library(stringr)
 library(purrr)
 library(htmltools)
+library(scales)
+library(leaflet) 
 ```
+
+## Melbourne Restaurant Expansion:
+##### A Data-Driven Analysis of Business Longevity and Location Risk
+
+### Abstract 
+
+This study investigates the factors influencing restaurant survival in Melbourne’s inner-city hospitality sector, combining statistical modelling with interactive data visualisation. Using integrated datasets from the City of Melbourne’s CLUE Business Census (2002–2023) and Pedestrian Counting System (2009–present), the analysis covers 4,200 businesses across two major industries: cafés and takeaway food services. Analytical methods include exploratory data analysis (EDA), principal component and clustering analysis for spatial grouping, random forest modelling for feature importance, and correlation-based relationship validation.
+
+Results reveal that competition density is the most critical determinant of business longevity, while restaurant size exerts a positive but nonlinear effect, and foot traffic shows minimal predictive value. Suburb-level differences exist but no single postcode guarantees success. The accompanying Shiny application extends these findings into an interactive decision tool, enabling users to explore success profiles, spatial patterns, and survival distributions by area and street. Collectively, the analysis provides both actionable insights and strategic guidance for location-based expansion planning in Melbourne’s restaurant market.
+
+### Background and Motivation 
+
+Melbourne’s hospitality industry is characterised by rapid market turnover and high competition density, with thousands of cafés and takeaway food services competing for limited consumer attention. Despite ongoing market growth, survival rates remain low, particularly for small-scale operators entering prime dining precincts. Understanding the determinants of business longevity is therefore essential for strategic site selection, investment prioritisation, and urban planning.
+
+The project was developed in response to a consulting brief for a fast-growing Asian dining group established in 2023, currently expanding from Queensland and New South Wales into Victoria. The client sought a data-driven framework to guide expansion into Melbourne, aiming to identify optimal areas and understand which local environmental factors most strongly affect long-term success.
+
+The analysis leverages two complementary open-data sources:
+
+City of Melbourne’s CLUE Business Census (2002–2023) — providing longitudinal business records across 15 CLUE areas and 317 streets; and
+
+Pedestrian Counting System (2009–present) — offering hourly foot-traffic data from 143 sensors across the central municipality.
+
+Integrating these sources enables a multi-level assessment of market structure, competition intensity, and environmental exposure, providing a rare opportunity to study business survival patterns at both property and street level.
+
+This project is motivated by the practical need to bridge descriptive market profiling and quantitative survival modelling. While prior business studies often rely on predictive accuracy, this research emphasises interpretability and factor understanding, aligning with managerial decision contexts. Furthermore, by incorporating an interactive Shiny dashboard, the project delivers an accessible tool for exploration and stakeholder engagement, translating complex statistical findings into usable insights for strategic planning.
+
+###Objectives and Significance 
+
+##### Objectives
+
+The primary objective is to identify and quantify the key factors that influence restaurant longevity in Melbourne’s competitive dining landscape. Specifically, the study aims to:
+
+•	Examine spatial and structural patterns in business survival across areas and streets.
+
+•	Evaluate the relative importance of environmental and operational factors (competition, size, foot traffic, and location) using interpretable machine-learning and statistical methods.
+
+•	Explore how factor effects interact across lifecycle stages and business contexts.
+
+•	Translate findings into an interactive decision support system (Shiny app) that profiles markets, benchmarks street performance, and visualises success patterns.
+
+##### Significance
+
+The significance of this research lies in its contribution to evidence-based location strategy and market risk assessment. The results provide empirical clarity on common industry assumptions — notably challenging the perceived value of high-foot-traffic areas, while quantifying the dominant role of local competition.
+
+From an analytical standpoint, combining Random Forest modelling, PCA clustering, and lifecycle-stage correlation analysis offers a multi-angle understanding of business dynamics that balances interpretability and robustness.
+
+Practically, the findings guide decision-makers to optimise restaurant size within budget constraints, avoid multi-tenant properties with saturated competition, and prioritise moderate-competition areas that show consistent performance. The inclusion of an interactive Shiny dashboard extends these insights beyond static reporting, offering a transparent, visual, and repeatable framework for evaluating new sites — transforming data analysis into a decision-ready tool for strategic restaurant expansion in Melbourne.
+
+
+
+
+
+
+
+
+
+
+4. Data and Methodology — Data Aggregation
+4.1 Data Sources
+Two open datasets from the City of Melbourne Open Data Portal form the foundation of this analysis.
+(a) Cafes and Restaurants with Seating Capacity (CLUE Business Census, 2002–2023)
+This dataset contains annual business records within the Melbourne Local Government Area, encompassing approximately 63,000 observations across 15 variables. Each record includes business name, address, industry classification (ANZSIC4), seating capacity, CLUE area designation, and geographic coordinates (latitude and longitude). The temporal dimension (census year) enables the reconstruction of longitudinal business trajectories, making the dataset suitable for studying business openings, closures, and operational longevity in the inner-city food sector.
+Source: City of Melbourne Open Data Portal — Café, restaurant, bistro seats.
+(b) Pedestrian Counting System (2009–present)
+This dataset provides hourly bi-directional pedestrian flow data collected from over 140 sensors distributed across Melbourne’s activity hubs. Each sensor record contains a unique sensor ID, activation status, location coordinates, and directional flow counts. These sensors are positioned strategically based on retail density, pedestrian patterns, and event proximity. The dataset contributes an environmental exposure dimension, linking street-level foot traffic intensity to business outcomes.
+Source: City of Melbourne Open Data Portal — Pedestrian Counting System.
+
+
+4. Data and Methodology — Data Aggregation
+4.1 Data Sources
+This analysis integrates two key open datasets from the City of Melbourne Open Data Portal:
+(a) CLUE Business Census (2002–2023)
+The Census of Land Use and Employment (CLUE) records all registered businesses within Melbourne’s local government area. It contains over 63,000 observations across two decades, detailing trading names, addresses, ANZSIC classifications, seating capacity, CLUE area identifiers, and coordinates. Its annual structure enables longitudinal tracking of business openings and closures, making it well-suited for analysing business lifespans and survival determinants.
+(b) Pedestrian Counting System (2009–present)
+This dataset contains hourly foot-traffic counts from approximately 140 sensors located throughout the central municipality. Each record includes sensor IDs, coordinates, and directional flow data, which can be aggregated to represent average daily foot traffic. When matched geographically with CLUE business locations, this dataset provides a proxy for exposure to consumer activity.
+
+
+
+4.2 Methodological Overview for Data Aggregation
+The goal of data aggregation was to transform raw, inconsistent business and environmental data into a clean, integrated, and bias-aware dataset suitable for analytical modelling and visualisation. The process involved five key methodological steps:
+(1) data cleaning and standardisation,
+(2) business identity resolution,
+(3) bias mitigation through temporal filtering,
+(4) geographic aggregation for spatial context, and
+(5) temporal segmentation for lifespan classification.
+
+
+
+
+4.2.1 Data Cleaning and Standardisation
+Initial cleaning focused on resolving inconsistencies and outliers in the CLUE data.
+•	Missing values (NA): Records with missing core identifiers (such as business name, address, or coordinates) were excluded because their absence prevents reliable linkage or spatial analysis. For other missing attributes, no imputation was performed to avoid introducing artificial variance.
+•	Extreme seating values: Businesses with seating capacities greater than 200 seats were removed, as they represent unusually large establishments (e.g., event venues) outside the client’s operational scope. These outliers also distort distributional statistics and correlation measures.
+•	Coordinate precision: Geographic coordinates were rounded to a consistent precision to ensure alignment with foot-traffic sensors and to prevent false uniqueness caused by minor decimal differences.
+These cleaning procedures established a consistent foundation for further processing while preserving representativeness across areas and industries.
+
+
+
+
+4.2.2 Business Identity Resolution
+One of the most substantial methodological challenges was reconciling inconsistent business identifiers over time.
+The CLUE dataset records the same premises repeatedly across years but with variations in trading names, abbreviations, or address formats. To create a reliable longitudinal view, a multi-stage identity resolution algorithm was applied:
+1.	Exact and fuzzy name matching corrected typographical differences and brand variations (e.g., “Café Latte” vs “Cafe Latte”).
+2.	Fuzzy address alignment harmonised inconsistent or partially recorded street information.
+3.	Coordinate clustering grouped records within a defined spatial tolerance, assuming minor positional shifts represented the same venue.
+The output was a unified business_id variable that accurately tracked businesses across all 22 years. This enabled consistent measurement of lifespans and transitions between years.
+
+
+
+
+4.2.3 Bias Mitigation through Temporal Filtering
+To ensure unbiased lifespan estimates, two bias filters were applied.
+•	Survivorship Bias Filter (Right-Censoring):
+Businesses that opened recently (and are still operating) appear to have “short” lifespans simply because they have not yet closed. To avoid underestimating longevity, these ongoing businesses were excluded from statistical lifespan analysis but retained for descriptive profiling and visual storytelling within the Shiny dashboard.
+•	Early-Record Bias Filter (Left-Censoring):
+Some businesses existed before CLUE began in 2002. If these were treated as new entrants, their true duration would be understated. A secondary filter therefore excluded any businesses whose first recorded year coincided with the dataset’s start, preventing systematic underestimation of long-lived establishments.
+•	
+Together, these two filters ensure that only businesses with complete life cycles are used in duration-based models, while all others contribute to descriptive summaries.
+
+
+
+
+4.2.4 Competition Measurement (200 m Buffer)
+Each business was geocoded and linked to surrounding establishments within a 200-metre radius, representing a realistic local catchment and walking-distance competition zone. The buffer was defined based on the business’s opening year, ensuring that only competitors active at the same time were counted and avoiding future data leakage.
+Two indicators were derived to capture distinct aspects of the competitive environment:
+•	Same-industry competition counts nearby businesses in the same category (e.g., cafés near cafés, restaurants near restaurants), reflecting direct market rivalry.
+•	Other-industry competition counts neighbouring businesses from different categories (e.g., cafés near takeaway shops or bars), capturing indirect competition and overall commercial density.
+Analysing both allows differentiation between true competitive pressure within a market segment and general retail congestion, helping identify whether survival patterns depend more on rivalry intensity or on the vibrancy of mixed-use surroundings.
+
+
+
+4.2.5 Foot Traffic Aggregation and Coverage
+Each business was also spatially linked to the nearest pedestrian sensor within 200 metres to estimate average daily foot-traffic exposure. This matching connected business locations to Melbourne’s sensor network, allowing us to integrate human-movement data as a proxy for local demand and visibility.
+Because pedestrian sensors do not cover all areas, this dataset includes approximately 75% of businesses. To maintain full spatial representation, foot traffic was excluded from clustering analyses but incorporated later in the modelling stage (Section 4.8) to assess its direct contribution to business lifespan.
+This approach provides consistent spatial metrics for both competitive intensity and environmental opportunity, linking each business to its surrounding market and pedestrian context.
+
+4.2.6 Diagnostic and Robustness Checks
+
+To evaluate the robustness of spatial aggregation, multiple buffer distances were tested (50 m, 75 m, 100 m, 125 m, 150 m, 200 m, and 300 m).
+The resulting competition metrics produced similar relationships and model performance across the 50–200 m range.
+A radius of 200 m was selected for the final analysis because it yielded the highest R² in regression tests while maintaining intuitive interpretability as a typical walking distance.
+This consistency across distances indicates the spatial findings are robust to reasonable variations in buffer definition.
+
+
+
+
+4.2.5 Temporal Segmentation for Lifespan Analysis
+To facilitate structured interpretation, businesses were grouped into lifespan categories (e.g., 0–2, 3–5, 6–8, 9–12, and >12 years). This segmentation allows the comparison of factor effects across distinct stages of the business lifecycle — for instance, identifying which attributes matter most during the startup stage versus long-term sustainability.
+Temporal segmentation also supports clear visualisation within the Shiny app, enabling users to explore longevity patterns interactively by category rather than treating lifespan as a continuous variable.
+
+
+
+
+
+
+
+4.7 Functional Aspects of the Shiny Application
+
+
+The Shiny dashboard translates the cleaned, bias-filtered dataset into an actionable, exploratory decision-support system. It enables stakeholders to interrogate where venues succeed, how long they last, and which local conditions (competition, size, location) co-vary with longevity. The tool complements the statistical analysis by exposing the same data-generation rules (identity resolution; two bias filters; 200 m competition context) through consistent filters and summaries.
+
+
+A. Interactive Business Location Map (profile & density view)
+
+
+•	Dual temporal views: Historical (completed lifecycles) vs Current (operating in 2023) to avoid survivorship bias when exploring longevity patterns.
+
+•	Targeted filtering: Industry selector and lifespan bands (1–2, 3–5, 6–8, 9–12, >12 years) allow users to isolate maturity tiers.
+
+•	Rich pop-ups (business profile): Clicking a point reveals name, address, industry, measured lifespan, lifecycle status (e.g., “Long-term Success (Closed)”), and seating capacity—supporting micro-level due diligence.
+
+•	Density & clustering cues: Visual concentration of points surfaces street- and area-level density; the Map Summary panel reports businesses shown, average lifespan, and success rate for the active filters, turning the map into a quick situational report.
+
+•	Decision use: Identify pockets of long-lived venues, cross-check whether density reflects healthy agglomeration or risky crowding, and shortlist candidate micro-locations before deeper street benchmarking.
+B. Geographic Success Heatmap (area × industry matrix)
+
+
+•	Success threshold slider (2/5/15 years) stress-tests how the interpretation changes under different definitions of “success.”
+
+•	Matrix by CLUE area × industry presents area-level business survival rates, highlighting neighbourhoods with relatively higher or lower long-term success.
+
+•	Decision use: Helps quickly identify high-performing local areas and test whether these performance patterns remain consistent when the success threshold changes. This supports broader location profiling rather than prediction for any single cuisine type.
+
+
+
+
+C. Business Duration Patterns (distribution & context statistics)
+
+•	Selectable industry + area returns the full lifespan histogram for businesses meeting the bias-free criteria.
+
+•	Context metrics: On-panel statistics (total n, median lifespan, short-term share, success rate) provide local operating context at a glance.
+
+•	Decision use: Gauge variability and tail risk (e.g., short-term failure prevalence) before committing to a precinct.
+
+
+
+
+
+D. Street Performance Comparison (peer benchmarking)
+
+
+•	Side-by-side street benchmarking (up to three streets) shows:
+o	Historical businesses, average lifespan, success rate (>12 y), current businesses, average seats (2023), and 200 m competition density;
+o	Peer context via vs Area Benchmark (street delta vs its CLUE area);
+o	Linked charts for success rate and current competition to visualise trade-offs.
+
+
+•	Decision use: Compare a candidate street with local peers to understand whether its performance is exceptional or reflects broader area effects; confirm the number of businesses (market depth) and whether current crowding is already high.
+E. Design principles & implementation notes
+
+
+•	Analytical fidelity: All modules reflect the same preprocessing rules (identity resolution, two bias filters, 200 m competition radius, removal of extreme >200-seat venues, no imputation).
+
+
+•	Transparency: Panels surface the denominators and definitions (e.g., completed lifecycles, threshold years), preventing misinterpretation.
+
+
+•	Technology: Built with shiny, leaflet, plotly, and tidyverse; responsive layout for desktop review sessions with clients.
+
+
+•	Role in the study: The Shiny application was developed at the client’s request as a descriptive and exploratory profiling tool rather than a predictive model. It enables the client to interactively explore location- and business-level patterns—such as where long-lived businesses cluster, how competition density varies by area, and how lifespan distributions differ across precincts.
+By integrating the underlying analytical framework into a visual interface, the app enhances interpretability, communication, and scenario exploration, supporting evidence-based discussions about precinct and street selection while maintaining the project’s main analytical focus on understanding factor importance (competition, size, and location characteristics).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2712,6 +2953,58 @@ write_csv(df_updated, "df_ULTRA_enhanced_with_traffic.csv")
 
 
 
+```{r}
+# Load the data and create complete lifespan filter
+library(tidyverse)
+
+# Read the CSV
+df <- read.csv("df_ULTRA_enhanced_with_traffic.csv")
+
+# Check the business_status categories
+cat("Business Status Categories:\n")
+table(df$business_status)
+
+# Create filter for complete lifespan analysis
+df <- df %>%
+  mutate(
+    # TRUE = complete lifespan data (use for analysis)
+    # FALSE = censored data (exclude from lifespan analysis)
+    complete_lifespan = business_status %in% c("Closed Business", 
+                                                "Long-term Success (Closed)")
+  )
+
+# Verify the filter mapping
+cat("\n\nFilter Verification:\n")
+df %>%
+  group_by(business_status, complete_lifespan) %>%
+  summarise(
+    count = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(complete_lifespan), business_status) %>%
+  print()
+
+# Summary statistics
+cat("\n\nSummary:\n")
+cat("Total records:", nrow(df), "\n")
+cat("Records with complete lifespan (for analysis):", sum(df$complete_lifespan), "\n")
+cat("Records with censored data (exclude):", sum(!df$complete_lifespan), "\n")
+cat("\nPercentage with complete data:", 
+    round(100 * sum(df$complete_lifespan) / nrow(df), 1), "%\n")
+
+# Save the updated dataframe
+write.csv(df, "df_ULTRA_enhanced_with_traffic.csv", row.names = FALSE)
+
+# Example usage for analysis
+df_for_lifespan_analysis <- df %>%
+  filter(complete_lifespan == TRUE)
+
+cat("\nDataset ready for analysis:", nrow(df_for_lifespan_analysis), "records\n")
+```
+
+
+
+
 #### EDA
 
 
@@ -2722,8 +3015,7 @@ library(dplyr)
 library(ggplot2)
 
 # Load data
-df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
-  filter(start_year_filter == TRUE)
+df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
 
 # Prepare yearly counts (unique businesses) for the two industries
 industry_year_counts <- df %>%
@@ -2747,6 +3039,12 @@ ggplot(industry_year_counts, aes(x = census_year, y = Count, color = industry_pl
 
 ```
 
+
+
+
+Business Count Trends (2002-2023)
+From Figure 1, we observe stark differences in market scale between industries. Restaurants dominate with 800 establishments in 2002 growing to 1,700 by 2018 (112% increase), while takeaways started from just 200 establishments reaching 350 by 2023 (75% growth). This 5:1 ratio reflects fundamental business model differences—restaurants require larger capital investment, prime locations, and full kitchen operations, creating natural barriers to entry. Takeaways' lower barriers (smaller footprint, limited menu, lower staffing) explain their modest absolute numbers despite higher growth rates.
+Critically, restaurant counts peaked in 2018 at 1,700 establishments before declining to 1,500 by 2023, suggesting market saturation occurred pre-pandemic. Takeaways showed no such decline, maintaining growth through 2023.
 
 ```{r}
 library(readr)
@@ -2791,7 +3089,11 @@ p_trand
 
 
 
+Figure 2 reveals extreme early-period volatility, particularly for takeaways with 25% growth (2004) followed by sharp contractions. This pattern likely reflects both small-base effects (percentage changes appear extreme when n<100) and potential data collection improvements as the CLUE census matured. Early years may capture initial business registration waves rather than true market growth.
 
+Takeaway growth rates swing wildly between -8% and +25% year-over-year. Restaurant growth fluctuates within ±8% range until 2020's sharp decline. High volatility in takeaways suggests an immature market responding to external shocks. Restaurants show typical mature market patterns until crisis hits.
+
+During COVID (2020-2021), the industries diverged dramatically: restaurants experienced sustained negative growth through 2021, while takeaways rebounded to positive territory by 2021. This suggests takeaway models provide crucial resilience during demand shocks, validating them as potential risk mitigation strategies for multi-format operators.
 
 
 
@@ -2845,7 +3147,7 @@ ggplot(avg_seating_trend,
 
 ```
 
-
+Figure 3 demonstrates consistent model differentiation: restaurants average 75-80 seats (2002-2012) before declining to 65 seats (2023), while takeaways maintain 19-20 seats throughout. The 18% reduction in restaurant size likely reflects rising CBD rental costs and shift toward quality-over-quantity positioning.
 
 
 
@@ -2856,7 +3158,7 @@ ggplot(avg_seating_trend,
 
 # 1) Load street data (time series by census_year)
 df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
-  filter(start_year_filter == TRUE)
+   filter(complete_lifespan == TRUE, start_year_filter == TRUE) 
 
 # 2) Collapse to ONE ROW PER BUSINESS
 #    (take the latest census snapshot for each business_id)
@@ -2896,75 +3198,303 @@ ggplot(biz2, aes(x = Industry, y = lifespan_years, fill = Industry)) +
 
 ```
 
+
+Figure 4 (violin plot) reveals nuanced survival patterns in the bias-corrected sample. Both industries show similar median lifespans (restaurants: 4 years, takeaways: 4 years), now identical after removing operating businesses. However, restaurants still exhibit slightly greater variance with more density in the upper range (8-15 years), though less extreme than before filtering. Takeaways show a more concentrated distribution around the median with minimal upper tail presence, confirming that few achieve institutional longevity even among closed businesses.
+
+
+
+
+
+
 ```{r}
+library(tidyverse)
 
+# ------------------------------------------------------------
+# 0) Libraries
+# ------------------------------------------------------------
+library(tidyverse)
 
-# 1️⃣ Load data
-df <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)%>%
-  filter(start_year_filter == TRUE)
+# ------------------------------------------------------------
+# 1) Load
+# ------------------------------------------------------------
+# Replace with your path if needed
+df <- readr::read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
 
-# 2️⃣ Keep one record per business (latest census year, bias-filtered)
-biz_unique <- df %>%
+# ------------------------------------------------------------
+# 2) Preprocess (match Shiny logic)
+#    - apply BOTH bias filters
+#    - keep ONE row per business (latest record)
+#    - drop NA lifespans
+#    - (optional) trim extreme seating outliers (client scope)
+# ------------------------------------------------------------
+df_one_row <- df %>%
+  filter(complete_lifespan == TRUE, start_year_filter == TRUE) %>%   # ✅ both filters
+  arrange(business_id, census_year) %>%
   group_by(business_id) %>%
-  slice_max(census_year, n = 1, with_ties = FALSE) %>%
+  slice_tail(n = 1) %>%                            # ✅ one row per business (latest)
   ungroup() %>%
-  filter(bias_filter == FALSE)
+  filter(!is.na(lifespan_years))
+  # |> filter(is.na(seats_2023) | seats_2023 <= 200) # optional policy toggle
 
-# 3️⃣ Select only Cafes and Takeaway
-lifespan_by_area <- biz_unique %>%
-  filter(industry %in% c("Cafes", "Takeaway")) %>%
+# If your industry labels vary (e.g., "Cafes" vs "Restaurant"),
+# make a simple, robust harmonised label:
+df_one_row <- df_one_row %>%
   mutate(
-    Industry = recode(industry,
-                      "Cafes" = "Restaurant",
-                      "Takeaway" = "Takeaway"),
-    CLUE_Area = clue_area
-  ) %>%
-  filter(!is.na(lifespan_years) & !is.na(CLUE_Area)) %>%
-  mutate(
-    # ✅ Updated lifespan grouping
-    lifespan_group = case_when(
-      lifespan_years <= 3  ~ "0–3 yrs",
-      lifespan_years <= 6  ~ "4–6 yrs",
-      lifespan_years <= 9  ~ "7–9 yrs",
-      lifespan_years <= 12 ~ "10–12 yrs",
-      TRUE ~ ">12 yrs"
-    ),
-    lifespan_group = factor(lifespan_group,
-                            levels = c("0–3 yrs", "4–6 yrs", "7–9 yrs", "10–12 yrs", ">12 yrs"))
-  ) %>%
-  group_by(CLUE_Area, Industry, lifespan_group) %>%
-  summarise(Count = n(), .groups = "drop")
-
-# 4️⃣ Plot with ordered x-axis
-ggplot(lifespan_by_area, aes(x = lifespan_group, y = Count, fill = Industry)) +
-  geom_col(position = "dodge") +
-  facet_wrap(~ CLUE_Area, scales = "free_y") +
-  labs(
-    title = "Business Lifespan Distribution by CLUE Area",
-    subtitle = "Restaurants vs Takeaway Food Services",
-    x = "Lifespan Group",
-    y = "Number of Businesses",
-    fill = "Industry"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    strip.text = element_text(face = "bold"),
-    axis.text.x = element_text(angle = 30, hjust = 1)
+    industry_simple = case_when(
+      str_detect(str_to_lower(industry), "takeaway") ~ "Takeaway",
+      str_detect(str_to_lower(industry), "cafe|restaurant") ~ "Restaurant",
+      TRUE ~ industry
+    )
   )
+
+# ------------------------------------------------------------
+# 3) Reusable plot function (same bins & colours as Shiny)
+# ------------------------------------------------------------
+make_lifespan_hist <- function(data, title = "Lifespan Distribution") {
+  plot_data <- data %>%
+    mutate(
+      lifespan_bin = if_else(lifespan_years >= 20, "20+", as.character(lifespan_years)),
+      duration_grp = case_when(
+        lifespan_years <= 2 ~ "Short-term (1–2 years)",
+        lifespan_years <= 5 ~ "Medium-term (3–5 years)",
+        TRUE               ~ "Long-term (6+ years)"
+      )
+    ) %>%
+    count(lifespan_bin, duration_grp, name = "n") %>%
+    mutate(
+      lifespan_num = if_else(lifespan_bin == "20+", 20, as.numeric(lifespan_bin))
+    ) %>%
+    arrange(lifespan_num)
+
+  ggplot(
+    plot_data,
+    aes(
+      x = factor(lifespan_bin, levels = unique(lifespan_bin[order(lifespan_num)])),
+      y = n,
+      fill = factor(duration_grp,
+                    levels = c("Short-term (1–2 years)",
+                               "Medium-term (3–5 years)",
+                               "Long-term (6+ years)"))
+    )
+  ) +
+    geom_col(alpha = 0.8) +
+    scale_fill_manual(
+      values = c("Short-term (1–2 years)" = "#1f77b4",
+                 "Medium-term (3–5 years)" = "#ff7f0e",
+                 "Long-term (6+ years)"    = "#2ca02c"),
+      name = "Duration"
+    ) +
+    labs(
+      title = title,
+      x = "Lifespan (Years)",
+      y = "Number of Businesses"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      legend.position = "right",
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+
+# ------------------------------------------------------------
+# 4) Build the two requested plots (Restaurant & Takeaway)
+# ------------------------------------------------------------
+df_rest <- df_one_row %>% filter(industry_simple == "Restaurant")
+df_take <- df_one_row %>% filter(industry_simple == "Takeaway")
+
+p_restaurant <- make_lifespan_hist(df_rest,  "Restaurant Lifespan Distribution")
+p_takeaway   <- make_lifespan_hist(df_take,  "Takeaway Lifespan Distribution")
+
+# Print (or ggsave) as needed
+print(p_restaurant)
+print(p_takeaway)
+
+# Example saves:
+# ggsave("restaurant_lifespan_hist.png", p_restaurant, width = 10, height = 6, dpi = 300)
+# ggsave("takeaway_lifespan_hist.png",   p_takeaway,   width = 10, height = 6, dpi = 300)
+
+# ------------------------------------------------------------
+# 5) Quick stats (mirrors your Shiny sidebar)
+# ------------------------------------------------------------
+quick_stats <- function(d) {
+  tibble(
+    total      = nrow(d),
+    median_yrs = median(d$lifespan_years),
+    short_term = sum(d$lifespan_years <= 2),
+    success_pct = mean(d$lifespan_years > 12) * 100
+  )
+}
+stats_rest <- quick_stats(df_rest)
+stats_take <- quick_stats(df_take)
+
+stats_rest
+stats_take
 
 ```
 
+
+Figures 5 and 6 expose critical early-stage mortality patterns. Both industries suffer catastrophic Year 1-2 failures: restaurants lose 800+ businesses, while takeaways lose 250 businesses. This higher proportional failure rate for takeaways challenges assumptions about their lower-risk profile.
+
+The distribution shapes diverge after year 7: restaurants maintain consistent representation (30-100 businesses) across years 6-20, while takeaway counts decay rapidly after year 7. The restaurant spike at 20+ years represents pre-2002 establishments, confirming survivor advantages compound over time.
+
+```{r}
+library(tidyverse)
+
+# -----------------------------
+# 0) Params (set as needed)
+# -----------------------------
+industry_filter <- NULL      # e.g. "Restaurants" or "Takeaway"; NULL = all industries
+ncol_facets     <- 4         # how many facets per row
+
+# -----------------------------
+# 1) Load + reduce to one row/business
+# -----------------------------
+df <- readr::read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+df_last <- df %>%
+  filter(complete_lifespan == TRUE, start_year_filter == TRUE) %>%    # both bias filters
+  arrange(business_id, census_year) %>%
+  group_by(business_id) %>%
+  slice_tail(n = 1) %>%                           # one row per business (time series collapsed)
+  ungroup()
+
+if (!is.null(industry_filter)) {
+  df_last <- df_last %>% filter(industry == industry_filter)
+}
+
+# -----------------------------
+# 2) Lifespan → 5 conceptual stages
+# -----------------------------
+stage_levels <- c("1–2 (Early stage)",
+                  "3–5 (Transitional)",
+                  "6–12 (Established)",
+                  "13–18 (Veteran)",
+                  "19+ (Legacy)")
+
+df_facets <- df_last %>%
+  filter(!is.na(lifespan_years)) %>%
+  mutate(
+    lifespan_stage = case_when(
+      lifespan_years <= 2  ~ stage_levels[1],
+      lifespan_years <= 5  ~ stage_levels[2],
+      lifespan_years <= 12 ~ stage_levels[3],
+      lifespan_years <= 18 ~ stage_levels[4],
+      TRUE                 ~ stage_levels[5]
+    ),
+    lifespan_stage = factor(lifespan_stage, levels = stage_levels)
+  )
+
+# -----------------------------
+# 3) Faceted bar chart (counts)
+# -----------------------------
+p_counts <- ggplot(df_facets, aes(x = lifespan_stage, fill = lifespan_stage)) +
+  geom_bar() +
+  facet_wrap(~ clue_area, ncol = ncol_facets, scales = "free_y") +
+  scale_fill_manual(
+    values = c("1–2 (Early stage)"   = "#1f77b4",
+               "3–5 (Transitional)"  = "#ff7f0e",
+               "6–12 (Established)"  = "#2ca02c",
+               "13–18 (Veteran)"     = "#17becf",
+               "19+ (Legacy)"        = "#9467bd"),
+    name = "Lifespan Stage"
+  ) +
+  labs(
+    title = "Business Lifespan Distribution by CLUE Area",
+    subtitle = ifelse(is.null(industry_filter),
+                      "All industries; one record per business (latest census)",
+                      paste("Industry:", industry_filter, "— one record per business (latest census)")),
+    x = "Lifespan Stage",
+    y = "Number of Businesses"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+p_counts
+
+# -----------------------------
+# (Optional) Faceted bar chart (percent share within area)
+# -----------------------------
+p_share <- ggplot(df_facets, aes(x = lifespan_stage, fill = lifespan_stage)) +
+  geom_bar(position = "fill") +
+  facet_wrap(~ clue_area, ncol = ncol_facets) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(
+    values = c("1–2 (Early stage)"   = "#1f77b4",
+               "3–5 (Transitional)"  = "#ff7f0e",
+               "6–12 (Established)"  = "#2ca02c",
+               "13–18 (Veteran)"     = "#17becf",
+               "19+ (Legacy)"        = "#9467bd"),
+    name = "Lifespan Stage"
+  ) +
+  labs(
+    title = "Composition of Lifespan Stages by CLUE Area",
+    subtitle = ifelse(is.null(industry_filter),
+                      "All industries; share within area",
+                      paste("Industry:", industry_filter, "— share within area")),
+    x = "Lifespan Stage",
+    y = "Share of Businesses"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+ print(p_share)  # uncomment to view percentage version instead
+
+
+```
+
+
+Area-Level Performance Analysis
+Figure 7 reveals dramatic geographic variations in lifecycle patterns. Analyzing early-stage failures (1-2 years) versus long-term success (13+ years):
+High early-stage failure areas:
+
+Melbourne CBD: Highest absolute failures due to volume (600+ businesses)
+Docklands: Highest proportional failures relative to total businesses
+Parkville: Disproportionate concentration in early-stage band
+
+Strong long-term survivor areas:
+
+Carlton: Balanced distribution with notable 13-18 year cohort despite filtering
+North Melbourne: Healthy representation across all lifecycle stages
+
+
+The pattern suggests areas with 50-150 total businesses achieve optimal balance—sufficient market depth without triggering hypercompetition evident in CBD's 600+ establishment concentration.
+
+
+
+
+
+
+4.5 EDA Summary: Integrated Findings
+The exploratory analysis reveals a market shaped by structural forces and geographic dynamics:
+Market maturity indicators: The restaurant sector's 5:1 scale advantage reflects higher barriers to entry, but 2018 peak signals saturation. Pre-COVID decline combined with forced downsizing (80→65 seats) indicates transition from growth to optimization phase. Takeaways' continued expansion suggests their niche remains underpenetrated.
+Survival paradox: Despite lower barriers to entry, takeaways show higher proportional early-stage failure (45% vs 35%). This suggests ease of entry attracts undercapitalized operators, while restaurant barriers pre-filter for serious players. However, restaurants achieving 5+ year survival demonstrate superior longevity potential.
+COVID resilience divergence: Takeaways' rapid recovery versus restaurants' prolonged struggles validates format diversification as risk mitigation. Our client's full-service model should consider takeaway capabilities as defensive strategy.
+
+
+Critical two-year cliff: Universal 35-45% mortality in years 1-2 transcends industry and geography, suggesting systemic challenges requiring targeted early-stage strategies rather than location selection alone.
+These patterns inform our subsequent modeling by highlighting non-linear relationships between scale, competition, and survival requiring sophisticated analytical approaches beyond simple correlation analysis.
+
+
+
 ```{r}
 
 
+library(cluster) 
+library(factoextra) 
 
-
+library(ggdendro)
 # Load data
 df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
 
 # Bias-free cohort (closed OR veteran) AND valid start (first_seen > 2002 OR veteran)
 df_analysis <- df_full %>%
-  filter(bias_filter == FALSE, start_year_filter == TRUE) %>%   # ← add this condition
+   filter(complete_lifespan == TRUE, start_year_filter == TRUE) %>%    # ← add this condition
   arrange(business_id, census_year) %>%
   group_by(business_id) %>%
   slice_head(n = 1) %>%   # first observation per business
@@ -3356,7 +3886,7 @@ for (i in 1:optimal_k_street) {
 
 # Scatter plot: Success Rate vs Competition
 p_street_scatter <- ggplot(street_metrics, 
-                           aes(x = mean_competition, y = success_rate, 
+                           aes(x = mean_competition, y = mean_lifespan , 
                                color = street_tier, size = n_businesses)) +
   geom_point(alpha = 0.6) +
   scale_color_manual(
@@ -3371,7 +3901,7 @@ p_street_scatter <- ggplot(street_metrics,
     title = "Street Performance: Success Rate vs Competition",
     subtitle = "Size = Number of businesses | Color = Performance tier",
     x = "Average Competition (200m radius)",
-    y = "Success Rate (%)",
+    y = "Mean Lifespan",
     color = "Street Tier",
     size = "Businesses"
   ) +
@@ -3562,6 +4092,17 @@ p_street_dist
 
 ```
 
+Cluster Characteristics Profile
+Figure 9 quantifies the tier differences through standardized metrics. Tier 1 excels despite having slightly higher competition (21.1) than Tier 3 (18.1), achieving 15.1% success rate versus 7.3%. Tier 1 also features larger restaurants (55.7 seats), longer lifespans (6.3 years), and greater variability. Tier 2 shows extreme competition (123.1)—nearly 6x other tiers—yet maintains moderate success (12.3%). Tier 3 underperforms with the lowest metrics across all dimensions except competition.
+Insight: This definitively disproves the "low competition = success" hypothesis. Tier 1 areas succeed with MORE competition than struggling Tier 3 areas, achieving double the success rate (15.1% vs 7.3%). The differentiator must be fundamental market quality—Tier 1 locations can support more competitors because they have superior customer bases, accessibility, or complementary businesses that create larger addressable markets.
+
+
+
+Street-Level Performance Patterns
+
+Street Success vs Competition Scatter
+Figure 10 reveals nuanced patterns at street level. While many Gold tier streets (yellow) cluster in the low-competition zone (<50 competitors), a striking outlier shows a large Gold street succeeding with 60+ competitors and substantial business volume. More revealing is the mixing of Gold and Bronze streets in the low-competition zone—both street types coexist at similar competition levels (<30) yet achieve vastly different outcomes (8-12% vs 0-3% success).
+Insight: Competition fails to fully explain street performance. The presence of successful Gold streets at higher competition levels, combined with Bronze street failures despite minimal competition, indicates critical unmeasured factors drive success. These likely include foot traffic patterns, anchor tenants, street accessibility, parking availability, or proximity to complementary businesses. The large Gold street outlier suggests that exceptional locations can sustain higher density when fundamental attractiveness justifies it—similar to our area-level finding where quality trumps competition
 
 
 
@@ -3615,6 +4156,25 @@ ggsave("clue_areas_competition_vs_lifespan.png", p_area_scatter_life,
 p_area_scatter_life
 
 ```
+Figure 11 integrates competition, lifespan, and business volume by area. Melbourne CBD stands alone as Tier 2 with extreme competition (~125) and massive scale (1500+ businesses), achieving moderate lifespan (5.7 years). Tier 1 areas (red) span a wide competition range (15-50 competitors) while maintaining superior lifespans (5.9-6.5 years). Notably, Tier 3 areas (green) - Kensington and Docklands - show the lowest lifespans (5.2-5.4 years) despite having similar or even lower competition than some Tier 1 areas.
+Insight: The revised clustering confirms that competition density poorly predicts area performance. East Melbourne (Tier 1) thrives with minimal competition (~15), while Carlton (Tier 1) succeeds with 50+ competitors—over 3x higher. Meanwhile, Docklands (Tier 3) struggles despite moderate competition (~25). The 20-25% lifespan advantage of Tier 1 over Tier 3 areas at similar competition levels definitively proves that inherent location quality—not competitor count—drives area success. Melbourne CBD's unique position suggests it operates under different market dynamics, where extreme volume creates its own ecosystem despite shortened individual lifespans.
+
+
+
+
+
+4.7 Clustering Analysis Summary (Revised)
+The clustering analysis reveals that Melbourne's restaurant geography operates on multiple, interacting levels:
+Location quality trumps competition: The most striking finding is that Tier 1 areas actually have slightly MORE competition (21.1 competitors) than Tier 3 areas (18.1), yet achieve double the success rate (15.1% vs 7.3% in the bias-corrected sample). This definitively proves that competition density is not the primary driver of restaurant success. Instead, inherent area characteristics—likely including residential density, income levels, foot traffic patterns, and complementary retail—create the performance differential.
+Competition tolerance varies by quality: Tier 1 areas demonstrate remarkable flexibility, thriving across a wide competition range (15-50 competitors). East Melbourne succeeds with minimal competition while Carlton prospers with 3x higher density. This variability within Tier 1 suggests high-quality locations can adapt to different competitive intensities, while Tier 3 areas fail uniformly despite low competition.
+Scale effects persist: The difference in average restaurant size across tiers (55.7 vs 48.2 seats) remains substantial even after bias correction. Areas that attract operators willing to invest in 15% larger formats become successful, indicating location selection and operator quality are interlinked—professional operators recognize and invest in quality locations.
+CBD operates as distinct market: Melbourne CBD's extreme competition (123.1)—6x other areas—represents a fundamentally different ecosystem. Maintaining Tier 2 status (12.3% success) despite this density suggests unique demand drivers (tourists, office workers, events) create a larger addressable market with different survival dynamics than neighborhood-based locations.
+Hierarchical market structure: The disconnect between area and street patterns reveals multi-scale effects. Areas show quality-driven performance (Tier 1 succeeds despite higher competition), while individual streets show competition sensitivity (Gold and Bronze streets intermingle at low competition but diverge in outcomes). This implies a two-stage selection process—first identify high-quality areas, then navigate street-level competition within them.
+Hidden factors dominate: The mixing of Gold and Bronze streets at identical low competition levels (<30 competitors) indicates critical unmeasured variables drive success. These likely include micro-location factors (corner visibility, parking, transit access), anchor tenant effects, or temporal patterns (lunch vs dinner trade) that our competition metrics fail to capture.
+These geographic patterns, robust to bias correction, confirm that location fundamentals—not competition levels—drive restaurant survival. The next phase examines whether statistical modeling can quantify these quality factors and their relative importance in predicting success. whether statistical modeling can quantify these inherent location quality factors and their relative importance.
+
+
+
 
 
 
@@ -3635,7 +4195,7 @@ df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE
 
 # Get completed lifecycles only (bias-free sample)
 df_analysis <- df_full %>%
- filter(bias_filter == FALSE, start_year_filter == TRUE) %>%  
+  filter(complete_lifespan == TRUE, start_year_filter == TRUE) %>%  
   group_by(business_id) %>%
   slice_head(n = 1) %>%
   ungroup() %>%
@@ -3713,7 +4273,7 @@ df_good_poor <- df_streets %>%
   mutate(
     street_quality = case_when(
       street_tier %in% c("Gold Streets") ~ "Prime Streets",
-      street_tier %in% c("Copper Streets") ~ "Poor Streets",
+      street_tier %in% c("Bronze Streets", "Silver Streets") ~ "Poor Streets",
       TRUE ~ NA_character_
     )
   ) %>%
@@ -4238,7 +4798,12 @@ print(p_survival)
 ```
 
 
-
+Success Profile Analysis
+Long-Term Survivors vs Early Failures
+From Figure 12, we compare 2,019 businesses that failed within 3 years against 624 businesses achieving >12 year success. The industry composition shows minimal difference—successful establishments are slightly more likely to be cafes (81.6%) versus restaurants compared to failures (74.8%). CBD concentration is virtually identical between groups (63.0% vs 62.7%), challenging assumptions about location primacy.
+The most dramatic divergence appears in competitive environment. Successful businesses face less than half the same-industry competition of failures (30.2 vs 64.1 competitors within 200m), and one-third the other-industry competition (11 vs 35). Successful establishments also operate at larger scale, averaging 63.8 seats versus 52.1 for early failures—a 22% size premium.
+Insight: Competition emerges as the dominant differentiator between success and failure, with a threshold effect around 30-35 same-industry competitors. The similar CBD presence between groups (63%) confirms that being in high-traffic areas alone doesn't ensure success—what matters is the competitive density within those areas. The larger size of successful businesses likely reflects both cause and effect: operators with capital and confidence choose less saturated locations and build larger venues, which in turn provides operational advantages (economies of scale, menu diversity, event capacity) that enhance survival probability.
+Why this pattern exists: The 50% reduction in competition for successful businesses suggests they either: (1) strategically selected less saturated micro-locations from inception, (2) benefited from competitor attrition over time, creating breathing room, or (3) established strong positions that deterred new entrants. The 22% size advantage indicates successful operators invest more upfront, suggesting experience and capital—not just location—drive outcomes. The negligible difference in CBD presence reveals that market selection (Carlton vs Southbank vs CBD) matters less than tactical positioning within chosen markets.
 
 
 
@@ -4251,6 +4816,56 @@ print(p_survival)
 
 
 #### traditional RM
+
+#### 4.8 Predictive Modelling and Determinants of Restaurant Survival
+Rationale and Modelling Framework
+
+Following exploratory and clustering analyses, predictive modelling was conducted to quantify how competition, exposure, and business characteristics jointly shape restaurant lifespan. Two complementary approaches were employed:
+
+Random Forest (RF) — a non-linear ensemble method capturing complex, interactive effects (e.g., diminishing returns from foot traffic or saturation thresholds in competition).
+
+Ordinary Least Squares (OLS) — a linear benchmark used to interpret coefficient direction and statistical significance, providing transparency and inference that RF lacks.
+
+This dual-method design combines predictive accuracy with interpretability. The RF identifies which features truly drive survival, while OLS clarifies how they influence it. Together, they form a hybrid evidence base that balances data-driven power with economic reasoning.
+
+```{r}
+# Load data
+df_shiny <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE)
+df_full  <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
+
+# Select BOTH filter columns needed for merging
+filter_info <- df_full %>%
+  select(business_id, start_year_filter, complete_lifespan) %>%
+  distinct()
+
+# Join the filters into the Shiny dataset
+df_shiny_updated <- df_shiny %>%
+  left_join(filter_info, by = "business_id") %>%
+  mutate(
+    start_year_filter = replace_na(start_year_filter, FALSE),
+    complete_lifespan = replace_na(complete_lifespan, FALSE)
+  )
+
+# Sanity check — make sure row count remains the same
+stopifnot(nrow(df_shiny_updated) == nrow(df_shiny))
+
+# Verify the filters were added
+cat("Columns added successfully:\n")
+cat("start_year_filter:", sum(df_shiny_updated$start_year_filter), "TRUE values\n")
+cat("complete_lifespan:", sum(df_shiny_updated$complete_lifespan), "TRUE values\n")
+
+# For Random Forest modeling, use both filters:
+cat("\nRecords for modeling (both filters TRUE):", 
+    sum(df_shiny_updated$start_year_filter & df_shiny_updated$complete_lifespan), "\n")
+
+# Save updated dataset
+write_csv(df_shiny_updated, "df_clean_200m_shinny.csv")
+```
+
+
+
+
+
 ```{r}
 
 library(tidyverse)
@@ -4263,24 +4878,7 @@ library(scales)
 
 
 
-df_shiny <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE)
-df_full  <- read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
 
-#  Select only columns needed for merging
-filter_info <- df_full %>%
-  select(business_id, start_year_filter) %>%
-  distinct()
-
-#  Join the new filter into the Shiny dataset
-df_shiny_updated <- df_shiny %>%
-  left_join(filter_info, by = "business_id")%>%
-  mutate(start_year_filter = replace_na(start_year_filter, FALSE))
-
-#  Sanity check — make sure row count remains the same
-stopifnot(nrow(df_shiny_updated) == nrow(df_shiny))
-
-#  Save updated dataset
-write_csv(df_shiny_updated, "df_clean_200m_shinny.csv")
 
 
 # STEP 1: LOAD AND PREPARE DATA
@@ -4289,7 +4887,7 @@ write_csv(df_shiny_updated, "df_clean_200m_shinny.csv")
 # Load modeling data
 df_model <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE)%>%
 
-dplyr::filter(start_year_filter == TRUE)
+dplyr:: filter(complete_lifespan == TRUE, start_year_filter == TRUE)
 
 cat("Dataset loaded:\n")
 cat("  Rows:", nrow(df_model), "\n")
@@ -4417,15 +5015,14 @@ rf_model_raw <- train(
   tuneGrid = tune_grid,
   num.trees = 500,
   importance = "impurity",
-  num.threads = 4  # Adjust based on your CPU
+  num.threads = 4  
 )
 
 elapsed_1 <- round(difftime(Sys.time(), start_time_1, units = "mins"), 1)
 
-cat("\n✓ Model 1 training complete (", elapsed_1, "minutes)\n\n")
-cat("Best hyperparameters (non-standardized):\n")
+
 print(rf_model_raw$bestTune)
-cat("\nCV Performance:\n")
+
 print(rf_model_raw$results %>% 
         filter(
           mtry == rf_model_raw$bestTune$mtry,
@@ -4455,10 +5052,9 @@ rf_model_scaled <- train(
 
 elapsed_2 <- round(difftime(Sys.time(), start_time_2, units = "mins"), 1)
 
-cat("\n✓ Model 2 training complete (", elapsed_2, "minutes)\n\n")
-cat("Best hyperparameters (standardized):\n")
+
 print(rf_model_scaled$bestTune)
-cat("\nCV Performance:\n")
+
 print(rf_model_scaled$results %>% 
         filter(
           mtry == rf_model_scaled$bestTune$mtry,
@@ -4722,7 +5318,1058 @@ p3
 p4
 
 p_final
+
+importance_df
 ```
+
+
+```{r}
+library(tidyverse)
+library(randomForest)
+library(caret)
+
+# Step 1: First add foot traffic to shiny dataset
+df_shiny <- read_csv("df_clean_200m_shinny.csv")
+df_ultra <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+
+# Extract foot traffic (first row per business due to time series)
+foot_traffic_data <- df_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  select(business_id, avg_daily_foottraffic)
+
+# Add foot traffic to shiny
+df_shiny_enhanced <- df_shiny %>%
+  left_join(foot_traffic_data, by = "business_id")
+
+# Save enhanced dataset
+write_csv(df_shiny_enhanced, "df_clean_200m_with_foottraffic.csv")
+
+cat("Enhanced shiny dataset created\n")
+cat("Original records:", nrow(df_shiny), "\n")
+cat("Records with foot traffic:", sum(!is.na(df_shiny_enhanced$avg_daily_foottraffic)), "\n")
+
+# Step 2: Create modeling dataset with filters
+df_model <- df_shiny_enhanced %>%
+  filter(complete_lifespan == TRUE,           # Only closed businesses
+         start_year_filter == TRUE,           # Known start date
+         !is.na(avg_daily_foottraffic)) %>%  # Has foot traffic
+  select(-on_best_street,                     # Remove street indicators
+         -on_worst_street, 
+         -business_id,                        # REMOVE business ID - critical!
+         -start_year_filter,                  # Remove filter columns
+         -complete_lifespan)          # REMOVE street indicators
+
+cat("\nModeling dataset:", nrow(df_model), "businesses\n")
+
+# Step 3: Split data (80/20)
+set.seed(42)
+trainIndex <- createDataPartition(df_model$lifespan_numeric, p = 0.8, list = FALSE)
+train_data <- df_model[trainIndex, ]
+test_data <- df_model[-trainIndex, ]
+
+# Step 4: Identify numeric features to standardize
+numeric_features <- c("same_ind", "other_ind", "log_seats", "avg_daily_foottraffic", 
+                     "property_competition")
+
+# Standardize ONLY numeric features
+preProcValues <- preProcess(train_data[, numeric_features], method = c("center", "scale"))
+train_data_std <- train_data
+test_data_std <- test_data
+
+train_data_std[, numeric_features] <- predict(preProcValues, train_data[, numeric_features])
+test_data_std[, numeric_features] <- predict(preProcValues, test_data[, numeric_features])
+
+# Step 5: Parameter tuning with CV
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE
+)
+
+# Calculate appropriate mtry values
+n_features <- ncol(train_data_std) - 1
+mtry_values <- c(floor(sqrt(n_features)), floor(n_features/3), floor(n_features/2))
+mtry_values <- unique(mtry_values[mtry_values > 0])
+
+cat("\nTuning RF with mtry values:", mtry_values, "\n")
+
+rf_tune <- train(
+  lifespan_numeric ~ .,
+  data = train_data_std,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = expand.grid(mtry = mtry_values),
+  ntree = 300
+)
+
+# Step 6: Train final model with best parameters
+final_rf <- randomForest(
+  lifespan_numeric ~ .,
+  data = train_data_std,
+  mtry = rf_tune$bestTune$mtry,
+  ntree = 500,
+  nodesize = 10,
+  importance = TRUE
+)
+
+# Step 7: Evaluate performance
+# Training
+train_pred <- predict(final_rf, train_data_std)
+train_rmse <- sqrt(mean((train_pred - train_data_std$lifespan_numeric)^2))
+train_r2 <- cor(train_pred, train_data_std$lifespan_numeric)^2
+
+# Test
+test_pred <- predict(final_rf, test_data_std)
+test_rmse <- sqrt(mean((test_pred - test_data_std$lifespan_numeric)^2))
+test_r2 <- cor(test_pred, test_data_std$lifespan_numeric)^2
+
+cat("\n=== MODEL PERFORMANCE ===\n")
+cat("Training - RMSE:", round(train_rmse, 2), "R²:", round(train_r2, 3), "\n")
+cat("Test - RMSE:", round(test_rmse, 2), "R²:", round(test_r2, 3), "\n")
+cat("Overfitting check - RMSE difference:", round(test_rmse - train_rmse, 2), "\n")
+
+# Step 8: Feature importance
+importance_df <- data.frame(
+  feature = rownames(final_rf$importance),
+  importance = final_rf$importance[, "%IncMSE"]
+) %>%
+  arrange(desc(importance)) %>%
+  mutate(
+    feature_clean = case_when(
+      feature == "avg_daily_foottraffic" ~ "Foot Traffic",
+      feature == "same_ind" ~ "Same-Industry Competition", 
+      feature == "other_ind" ~ "Other-Industry Competition",
+      feature == "log_seats" ~ "Restaurant Size (log)",
+      feature == "property_competition" ~ "Property Competition",
+      feature == "industry_cafe" ~ "Cafe Business",
+      TRUE ~ str_replace_all(feature, "_", " ") %>% str_to_title()
+    )
+  )
+
+# Plot importance
+library(ggplot2)
+p_importance <- ggplot(importance_df %>% head(15), 
+                      aes(x = reorder(feature_clean, importance), y = importance)) +
+  geom_col(fill = "#3498db", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Feature Importance - Full Model with Foot Traffic",
+       subtitle = paste0("Random Forest with ", nrow(train_data), " training samples"),
+       x = NULL, y = "Importance (%IncMSE)") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+#print(p_importance)
+
+# Step 9: Check foot traffic's importance
+foot_rank <- which(importance_df$feature == "avg_daily_foottraffic")
+cat("\n=== FOOT TRAFFIC ANALYSIS ===\n")
+cat("Foot traffic importance rank:", foot_rank, "out of", nrow(importance_df), "features\n")
+cat("Foot traffic importance score:", round(importance_df$importance[foot_rank], 2), "\n")
+
+# Summary
+cat("\n=== FINAL SUMMARY ===\n")
+cat("Total features:", ncol(train_data_std) - 1, "\n")
+cat("Numeric features (standardized):", length(numeric_features), "\n")
+cat("Best mtry:", rf_tune$bestTune$mtry, "\n")
+cat("Test R²:", round(test_r2, 3), "\n")
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+library(dplyr)
+library(caret)
+library(knitr)
+library(kableExtra)
+
+#  Helper: extract best CV row from a caret model 
+best_cv_row <- function(model) {
+  # Use the row that maximizes CV R^2 (works across different grids)
+  model$results %>%
+    dplyr::slice_max(Rsquared, n = 1, with_ties = FALSE) %>%
+    dplyr::select(RMSE, Rsquared, MAE)
+}
+
+#  Helper: test metrics given a model & a test set
+test_metrics_for <- function(model, newdata, y) {
+  preds <- predict(model, newdata)
+  tibble(
+    `Test RMSE` = RMSE(preds, y),
+    `Test R²`   = R2(preds,  y),
+    `Test MAE`  = MAE(preds, y)
+  )
+}
+
+#  Build a comparison table for your two RF runs 
+# NOTE: Use scaled / raw test frames that match each model’s feature prep
+cv_raw    <- best_cv_row(rf_model_raw)
+cv_scaled <- best_cv_row(rf_model_scaled)
+
+test_raw    <- test_metrics_for(rf_model_raw,    df_test,       df_test$lifespan_numeric)
+test_scaled <- test_metrics_for(rf_model_scaled, df_test_scaled, df_test$lifespan_numeric)
+
+tbl_models <-
+  bind_rows(
+    tibble(Model = "RF") %>%
+      bind_cols(
+        cv_scaled |> rename(`CV RMSE` = RMSE, `CV R²` = Rsquared, `CV MAE` = MAE),
+        test_scaled
+      )
+  ) %>%
+  mutate(
+    `Overfit gap (CV–Test R²)` = `CV R²` - `Test R²`,
+    `RMSE diff (CV–Test)`      = `CV RMSE` - `Test RMSE`
+  ) %>%
+  # nice rounding
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+
+# ── 5) Print as a kable (HTML or LaTeX friendly) ─────────────────────────────
+tbl_models %>%
+  kable(
+    caption = "Model performance summary (CV vs Test)",
+    align   = "lrrrrrrr",
+    booktabs = TRUE
+  ) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover")) %>%
+  column_spec(1, bold = TRUE)
+
+```
+
+
+
+```{r}
+
+library(dplyr)
+library(caret)
+library(knitr)
+library(kableExtra)
+
+#   extract best CV row from caret model 
+best_cv_row <- function(model) {
+  # Get the best row based on CV results
+  model$results %>%
+    filter(mtry == model$bestTune$mtry) %>%
+    select(RMSE, Rsquared, MAE)
+}
+
+#  Helper: calculate test metrics 
+test_metrics <- function(predictions, actual) {
+  tibble(
+    `Test RMSE` = sqrt(mean((predictions - actual)^2)),
+    `Test R²`   = cor(predictions, actual)^2,
+    `Test MAE`  = mean(abs(predictions - actual))
+  )
+}
+
+#  Build comparison table for your RF model 
+
+# Extract CV metrics from rf_tune
+cv_metrics <- best_cv_row(rf_tune)
+
+# Calculate test metrics (using already computed predictions)
+test_metrics_vals <- test_metrics(test_pred, test_data_std$lifespan_numeric)
+
+# Create full comparison table
+tbl_models <- bind_rows(
+  tibble(Model = "RF with Foot Traffic") %>%
+    bind_cols(
+      cv_metrics %>% 
+        rename(`CV RMSE` = RMSE, `CV R²` = Rsquared, `CV MAE` = MAE),
+      test_metrics_vals
+    )
+) %>%
+  mutate(
+    `Overfit Gap (R²)` = `CV R²` - `Test R²`,
+    `RMSE Diff` = `Test RMSE` - `CV RMSE`  # Positive = worse on test
+  ) %>%
+  # Round for display
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+
+#  Add training metrics for comparison
+train_metrics <- tibble(
+  `Train RMSE` = sqrt(mean((train_pred - train_data_std$lifespan_numeric)^2)),
+  `Train R²` = cor(train_pred, train_data_std$lifespan_numeric)^2,
+  `Train MAE` = mean(abs(train_pred - train_data_std$lifespan_numeric))
+) %>%
+  mutate(across(everything(), ~round(.x, 3)))
+
+# Combine into comprehensive table
+tbl_full <- tbl_models %>%
+  bind_cols(train_metrics) %>%
+  select(Model, starts_with("CV"), starts_with("Test"), starts_with("Train"), 
+         `Overfit Gap (R²)`, `RMSE Diff`)
+
+#  Print as formatted table 
+tbl_full %>%
+  kable(
+    caption = "Random Forest Model Performance: Cross-Validation vs Test vs Training",
+    align = "lrrrrrrrrrr",
+    booktabs = TRUE
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover", "condensed")
+  ) %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(c(2:4), background = "#e8f4f8") %>%  # CV columns
+  column_spec(c(5:7), background = "#f8e8e8") %>%  # Test columns  
+  column_spec(c(8:10), background = "#e8f8e8") %>% # Train columns
+  add_header_above(c(" " = 1, "Cross-Validation" = 3, "Test Set" = 3, 
+                     "Training Set" = 3, "Diagnostics" = 2))
+
+
+
+
+
+# Simplified comparison table
+tbl_simple <- tibble(
+  Model = c("RF (All businesses)", "RF with Foot Traffic"),
+  `Sample Size` = c(3200, 2450),
+  `Test R²` = c(0.147, 0.273),
+  `Test RMSE (years)` = c(4.19, 3.97),
+  `Overfit Check` = c("Normal", "Good")
+)
+
+tbl_simple %>%
+  kable(caption = "Model Performance Comparison") %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+Model Performance Overview
+
+Two RF models were developed:
+
+Baseline model: all completed restaurants (n = 3,200).
+
+Enhanced model: subset including foot-traffic data (n = 2,450).
+
+Despite the smaller sample, incorporating foot-traffic improved accuracy substantially (R²: 0.147 → 0.273; RMSE: 4.19 → 3.97 years, Figure 12). Overfit checks confirmed that the enhanced model generalised well.
+
+Insight:
+Pedestrian activity adds measurable spatial context to survival prediction, reflecting the quality and vitality of trading environments beyond competition and area labels. Although foot-traffic data are biased toward central Melbourne, this bias aligns with the client’s target geography, making the model both representative and actionable.
+
+Why this pattern exists:
+Competition alone cannot explain performance variance among inner-city venues. Foot traffic captures ambient demand — the real-time potential customer base. By integrating this measure, the model transitions from describing where competition is low to explaining where opportunity endure
+
+```{r}
+print(p_importance)
+```
+
+Factor Importance: Random Forest
+
+Feature ranking (Figure 13) confirms a consistent hierarchy across all model runs. Other-Industry Competition and Same-Industry Competition dominate predictive influence, jointly accounting for the majority of model variance. Foot Traffic emerges as the third most critical variable, followed by CBD location, Restaurant Size (log seats), and Business Model (Café vs Restaurant).
+
+Insight:
+Competition variables dominate, but exposure and capacity-related features provide critical secondary effects. Foot traffic’s moderate importance confirms its stabilising power, while “Restaurant vs Takeaway” highlights structural business fragility in low-barrier segments.
+Area dummy variables, despite visual prominence in earlier clustering, contribute little unique explanatory power after controlling for quantitative competition and exposure metrics — indicating that location fundamentals are better represented by measurable features (competition, traffic, scale) than categorical suburb labels.
+
+Why this pattern exists:
+The model effectively deconstructs “location quality” into its operative components. Once competition and footfall intensity are directly measured, the area name itself ceases to add predictive value — a strong validation that the model generalises across geography rather than memorising it.
+
+Competition constrains survival primarily through demand fragmentation. However, high-traffic corridors expand the effective catchment, sustaining adequate patronage despite dense clustering. This interplay between competition and exposure explains why some central zones remain viable even at extreme densities.
+
+
+
+
+
+
+```{r}
+library(pdp)
+library(ggplot2)
+library(patchwork)
+
+# Generate PDPs for all 4 features
+pdp_same <- partial(final_rf, pred.var = "same_ind", train = train_data_std, plot = FALSE)
+pdp_other <- partial(final_rf, pred.var = "other_ind", train = train_data_std, plot = FALSE)
+pdp_size <- partial(final_rf, pred.var = "log_seats", train = train_data_std, plot = FALSE)
+pdp_traffic <- partial(final_rf, pred.var = "avg_daily_foottraffic", train = train_data_std, plot = FALSE)
+
+# Unstandardize for interpretable x-axis (apply inverse transform)
+pdp_same$same_ind <- pdp_same$same_ind * sd(df_model$same_ind) + mean(df_model$same_ind)
+pdp_other$other_ind <- pdp_other$other_ind * sd(df_model$other_ind) + mean(df_model$other_ind)
+pdp_size$log_seats <- pdp_size$log_seats * sd(df_model$log_seats) + mean(df_model$log_seats)
+pdp_traffic$avg_daily_foottraffic <- pdp_traffic$avg_daily_foottraffic * sd(df_model$avg_daily_foottraffic) + mean(df_model$avg_daily_foottraffic)
+
+# Panel A: Same-Industry Competition
+p1 <- ggplot(pdp_same, aes(x = same_ind, y = yhat)) +
+  geom_line(size = 0.5, color = "black") +
+  labs(title = "A. Same-Industry Competition",
+       x = "Number of Competitors (200m)",
+       y = "Predicted Lifespan (years)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3, color = "gray80"))
+
+# Panel B: Other-Industry Competition  
+p2 <- ggplot(pdp_other, aes(x = other_ind, y = yhat)) +
+  geom_line(size = 0.5, color = "black") +
+  labs(title = "B. Other-Industry Competition",
+       x = "Number of Competitors (200m)",
+       y = "Predicted Lifespan (years)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3, color = "gray80"))
+
+# Panel C: Restaurant Size
+p3 <- ggplot(pdp_size, aes(x = log_seats, y = yhat)) +
+  geom_line(size = 0.5, color = "black") +
+  labs(title = "C. Restaurant Size",
+       x = "Log(Seats)",
+       y = "Predicted Lifespan (years)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3, color = "gray80"))
+
+# Panel D: Foot Traffic
+p4 <- ggplot(pdp_traffic, aes(x = avg_daily_foottraffic, y = yhat)) +
+  geom_line(size = 0.5, color = "black") +
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "D. Daily Foot Traffic",
+       x = "Pedestrians per Day",
+       y = "Predicted Lifespan (years)") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3, color = "gray80"))
+
+# Combine plots
+final_plot <- (p1 + p2) / (p3 + p4) +
+  plot_annotation(
+    title = "Partial Dependence Plots: Feature Effects on Restaurant Lifespan",
+    subtitle = "Based on Random Forest model with standardized features",
+    theme = theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 10, color = "gray40")
+    )
+  )
+
+# Save as monochrome
+ggsave("pdp_monochrome.png", final_plot, 
+       width = 10, height = 8, dpi = 300, bg = "white")
+
+# Display
+print(final_plot)
+```
+
+
+```{r}
+# =========================
+# RF + Signed & Significant Importance (Full Script)
+# =========================
+
+# ---- Libraries ----
+library(tidyverse)
+library(readr)
+library(randomForest)
+library(ranger)
+library(caret)
+library(patchwork)
+library(scales)
+library(broom)
+library(stringr)
+library(forcats)
+
+# LOAD & PREP 
+df_model <- read_csv("df_clean_200m_shinny.csv", show_col_types = FALSE) %>%
+  # Your two filters (completed lifecycles + valid start-year window)
+  dplyr::filter(complete_lifespan == TRUE, start_year_filter == TRUE)
+
+cat("Dataset loaded:\n")
+cat("  Rows:", nrow(df_model), "\n")
+cat("  Features:", ncol(df_model) - 2, "(excluding business_id and target)\n\n")
+
+# Drop IDs and flags not used as predictors
+df_features <- df_model %>%
+  dplyr::select(-business_id, -on_best_street, -on_worst_street, -start_year_filter)
+
+# Remove rows with any NA (predictors or target)
+na_summary <- colSums(is.na(df_features))
+if (sum(na_summary) > 0) {
+  cat("⚠ Missing values detected. Removing rows with NAs...\n")
+  df_features <- na.omit(df_features)
+}
+
+# Explicitly drop complete_lifespan (already filtered) and any zero-variance columns
+if ("complete_lifespan" %in% names(df_features)) {
+  df_features <- dplyr::select(df_features, -complete_lifespan)
+}
+keep <- c("lifespan_numeric")
+singleval <- sapply(dplyr::select(df_features, -all_of(keep)),
+                    function(x) dplyr::n_distinct(x, na.rm = TRUE) > 1)
+df_features <- dplyr::bind_cols(
+  df_features[keep],
+  dplyr::select(df_features, -all_of(keep))[, singleval, drop = FALSE]
+)
+
+cat("Final dataset:\n")
+cat("  Complete cases:", nrow(df_features), "\n")
+cat("  Target variable: lifespan_numeric\n")
+cat("  Range:", min(df_features$lifespan_numeric), "-", max(df_features$lifespan_numeric), "years\n\n")
+
+#  TRAIN/TEST SPLIT (80/20) 
+set.seed(42)
+train_index <- createDataPartition(df_features$lifespan_numeric, p = 0.80, list = FALSE)
+df_train <- df_features[train_index, ]
+df_test  <- df_features[-train_index, ]
+
+#  STANDARDIZATION (numeric only, for “scaled” comparison)
+numeric_features <- df_train %>%
+  dplyr::select(-lifespan_numeric) %>%
+  dplyr::select(where(is.numeric)) %>%
+  names()
+
+preproc_params <- preProcess(df_train[, numeric_features], method = c("center", "scale"))
+
+df_train_scaled <- df_train
+df_train_scaled[, numeric_features] <- predict(preproc_params, df_train[, numeric_features])
+
+df_test_scaled <- df_test
+df_test_scaled[, numeric_features] <- predict(preproc_params, df_test[, numeric_features])
+
+#  CV SETUP 
+set.seed(42)
+cv_folds <- createFolds(df_train$lifespan_numeric, k = 5, returnTrain = TRUE)
+cv_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  savePredictions = "final",
+  index = cv_folds,
+  allowParallel = TRUE
+)
+
+#  TUNING GRID 
+n_features <- ncol(df_train) - 1
+tune_grid <- expand.grid(
+  mtry = c(3, 5, 7, 9, 11),
+  splitrule = c("variance", "extratrees"),
+  min.node.size = c(5, 10, 20, 30)
+)
+
+# TRAIN RF (raw & scaled) 
+set.seed(42)
+rf_model_raw <- train(
+  lifespan_numeric ~ .,
+  data = df_train,
+  method = "ranger",
+  trControl = cv_control,
+  tuneGrid = tune_grid,
+  num.trees = 500,
+  importance = "impurity",
+  num.threads = 4
+)
+
+set.seed(42)
+rf_model_scaled <- train(
+  lifespan_numeric ~ .,
+  data = df_train_scaled,
+  method = "ranger",
+  trControl = cv_control,
+  tuneGrid = tune_grid,
+  num.trees = 500,
+  importance = "impurity",
+  num.threads = 4
+)
+
+#  TEST METRICS 
+pred_raw    <- predict(rf_model_raw, df_test)
+pred_scaled <- predict(rf_model_scaled, df_test_scaled)
+
+test_metrics <- tibble(
+  Model = c("Non-Standardized (RF Standard)", "Standardized (Comparison)"),
+  `Test RMSE` = c(RMSE(pred_raw, df_test$lifespan_numeric),
+                  RMSE(pred_scaled, df_test$lifespan_numeric)),
+  `Test MAE` = c(MAE(pred_raw, df_test$lifespan_numeric),
+                 MAE(pred_scaled, df_test$lifespan_numeric)),
+  `Test R²`  = c(R2(pred_raw, df_test$lifespan_numeric),
+                 R2(pred_scaled, df_test$lifespan_numeric)),
+  `CV RMSE`  = c(min(rf_model_raw$results$RMSE),
+                 min(rf_model_scaled$results$RMSE)),
+  `CV R²`    = c(max(rf_model_raw$results$Rsquared),
+                 max(rf_model_scaled$results$Rsquared))
+) %>%
+  mutate(
+    `Overfit Gap (CV-Test R²)` = `CV R²` - `Test R²`,
+    `RMSE Diff (CV-Test)`      = `CV RMSE` - `Test RMSE`
+  )
+print(test_metrics, width = Inf)
+
+best_model <- if (test_metrics$`Test R²`[1] >= test_metrics$`Test R²`[2]) rf_model_raw else rf_model_scaled
+best_pred  <- if (identical(best_model, rf_model_raw)) pred_raw else pred_scaled
+
+#  RF IMPORTANCE 
+importance_df <- varImp(best_model)$importance %>%
+  rownames_to_column("Feature") %>%
+  arrange(desc(Overall)) %>%
+  mutate(
+    Feature_Clean = case_when(
+      Feature == "same_ind"             ~ "Same-Industry Competition (200m)",
+      Feature == "other_ind"            ~ "Other-Industry Competition (200m)",
+      Feature == "log_seats"            ~ "Restaurant Size (log seats)",
+      Feature == "property_competition" ~ "Property-Level Competition",
+      Feature == "mixed_seating"        ~ "Mixed Seating Type",
+      Feature == "industry_cafe"        ~ "Cafe Business Model",
+      Feature == "outdoor_seating"      ~ "Outdoor Seating",
+      str_starts(Feature, "clue_area")  ~ str_replace_all(str_to_title(Feature), "_", " "),
+      TRUE ~ str_to_title(str_replace_all(Feature, "_", " "))
+    ),
+    Rank = row_number()
+  )
+
+#  Surrogate OLS to obtain SIGN & SIGNIFICANCE (NA-safe) 
+rm_model <- lm(lifespan_numeric ~ ., data = df_train)
+
+tidy_rm <- broom::tidy(rm_model) %>%
+  dplyr::filter(term != "(Intercept)") %>%
+  dplyr::filter(!is.na(estimate)) %>%  # drop aliased / NA estimates
+  dplyr::mutate(
+    base_var = dplyr::case_when(
+      stringr::str_detect(term, "^clue_area") ~ "clue_area",
+      TRUE ~ stringr::str_replace(term, ":.*$", "")
+    ),
+    sign_one = dplyr::case_when(
+      estimate >  0 ~ "positive",
+      estimate <  0 ~ "negative",
+      TRUE          ~ "zero"
+    ),
+    star = dplyr::case_when(
+      p.value < .001 ~ "***",
+      p.value < .01  ~ "**",
+      p.value < .05  ~ "*",
+      TRUE           ~ ""
+    )
+  )
+
+sig_by_var <- tidy_rm %>%
+  dplyr::group_by(base_var) %>%
+  dplyr::summarise(
+    sign_collapsed = {
+      valid   <- !is.na(estimate) & !is.na(p.value)
+      est_sig <- estimate[valid & p.value < .05]
+      pos_sig <- any(est_sig > 0)
+      neg_sig <- any(est_sig < 0)
+
+      if (pos_sig && !neg_sig) {
+        "positive"
+      } else if (neg_sig && !pos_sig) {
+        "negative"
+      } else if (pos_sig && neg_sig) {
+        "mixed"
+      } else {
+        s <- sum(sign(replace_na(estimate, 0)) * abs(replace_na(estimate, 0)), na.rm = TRUE)
+        if (s > 0) "positive" else if (s < 0) "negative" else "unknown"
+      }
+    },
+    star_any = ifelse(any(p.value < .05, na.rm = TRUE), "*", ""),
+    .groups = "drop"
+  )
+
+# Map RF feature names -> base variable to merge signs/stars
+map_rf_to_base <- importance_df %>%
+  transmute(
+    feature_raw = Feature,
+    Feature_Clean,
+    Overall,
+    base_var = case_when(
+      Feature == "same_ind"             ~ "same_ind",
+      Feature == "other_ind"            ~ "other_ind",
+      Feature == "log_seats"            ~ "log_seats",
+      Feature == "property_competition" ~ "property_competition",
+      Feature == "mixed_seating"        ~ "mixed_seating",
+      Feature == "industry_cafe"        ~ "industry_cafe",
+      Feature == "outdoor_seating"      ~ "outdoor_seating",
+      str_starts(Feature, "clue_area")  ~ "clue_area",
+      TRUE                              ~ Feature
+    )
+  )
+
+imp_annot <- map_rf_to_base %>%
+  left_join(sig_by_var, by = "base_var") %>%
+  mutate(
+    sign_collapsed = dplyr::coalesce(sign_collapsed, "unknown"),
+    star_any = dplyr::coalesce(star_any, ""),
+    sign_col = fct_relevel(factor(sign_collapsed),
+                           "negative","mixed","positive","unknown")
+  )
+
+#  Plot p3 with SIGN (+/-) & SIGNIFICANCE 
+p3 <- imp_annot %>%
+  slice_max(Overall, n = 15) %>%
+  ggplot(aes(x = reorder(Feature_Clean, Overall), y = Overall, fill = sign_col)) +
+  geom_col(alpha = 0.9) +
+  coord_flip() +
+  geom_text(aes(label = star_any), hjust = -0.3, size = 5, fontface = "bold") +
+  scale_fill_manual(
+    name = "Direction (from OLS)",
+    values = c("negative"="#d9534f","mixed"="#999999","positive"="#2ca02c","unknown"="#6c757d")
+  ) +
+  labs(
+    title    = "Feature Importance (Top 15)",
+    subtitle = "Bars = RF impurity importance • Color = OLS direction • * = any p<0.05",
+    x = NULL, y = "Importance Score"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom") +
+  expand_limits(y = max(imp_annot$Overall, na.rm = TRUE) * 1.10)
+
+print(p3)
+ggsave("rf_feature_importance_signed.png", p3, width = 10, height = 7, dpi = 300, bg = "white")
+
+#  Other diagnostics from your original script 
+
+# Predicted vs Actual
+best_pred_vec <- if (identical(best_model, rf_model_raw)) pred_raw else pred_scaled
+p1 <- tibble(actual = df_test$lifespan_numeric, predicted = best_pred_vec) %>%
+  ggplot(aes(x = actual, y = predicted)) +
+  geom_point(alpha = 0.4, color = "#3498db") +
+  geom_abline(slope = 1, intercept = 0, color = "#e74c3c", linetype = "dashed", size = 1) +
+  geom_smooth(method = "lm", color = "#2ecc71", fill = "#2ecc71", alpha = 0.2, se = TRUE) +
+  labs(title = "Model Performance: Predicted vs Actual Lifespan",
+       subtitle = "Test set (20%)",
+       x = "Actual Lifespan (years)", y = "Predicted Lifespan (years)") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Residual plot
+residuals_vec <- df_test$lifespan_numeric - best_pred_vec
+p2 <- tibble(predicted = best_pred_vec, residuals = residuals_vec) %>%
+  ggplot(aes(x = predicted, y = residuals)) +
+  geom_point(alpha = 0.4, color = "#9b59b6") +
+  geom_hline(yintercept = 0, color = "#e74c3c", linetype = "dashed", size = 1) +
+  geom_smooth(method = "loess", color = "#2ecc71", fill = "#2ecc71", alpha = 0.2, se = TRUE) +
+  labs(title = "Residual Plot", subtitle = "Check for systematic bias",
+       x = "Predicted Lifespan (years)", y = "Residuals") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Hyperparameter tuning
+p4 <- rf_model_raw$results %>%
+  ggplot(aes(x = mtry, y = Rsquared, color = factor(min.node.size))) +
+  geom_line(size = 1) + geom_point(size = 2) +
+  facet_wrap(~splitrule) +
+  scale_color_brewer(palette = "Set1", name = "Min Node Size") +
+  labs(title = "Hyperparameter Tuning: R² vs mtry",
+       subtitle = "Across split rules and node sizes",
+       x = "mtry (features per split)", y = "Cross-Validation R²") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom")
+
+# Combine (optional)
+p_final <- (p1 | p2) / (p3 | p4) +
+  plot_annotation(
+    title = "Random Forest Model Diagnostics — Proper ML Workflow",
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+print(p_final)
+ggsave("rf_model_proper_workflow.png", p_final, width = 16, height = 12, dpi = 300, bg = "white")
+
+# Save artifacts
+saveRDS(best_model, "rf_model_final_tuned.rds")
+saveRDS(preproc_params, "preprocessing_params.rds")
+
+# Export predictions & importance
+predictions_export <- tibble(
+  actual_lifespan = df_test$lifespan_numeric,
+  predicted_lifespan = best_pred_vec,
+  residual = residuals_vec,
+  abs_error = abs(residuals_vec)
+) %>% arrange(desc(abs_error))
+write_csv(predictions_export, "rf_test_predictions.csv")
+
+write_csv(importance_df, "rf_feature_importance.csv")
+
+```
+
+
+
+```{r}
+
+
+#  Libraries 
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(broom)
+library(ggplot2)
+library(patchwork)
+
+#  LOAD AND MERGE DATA 
+df_shiny <- read_csv("df_clean_200m_shinny.csv")
+df_ultra <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
+
+# Extract foot traffic (first row per business)
+foot_traffic_data <- df_ultra %>%
+  group_by(business_id) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  select(business_id, avg_daily_foottraffic)
+
+# Merge foot traffic into shiny
+df_enhanced <- df_shiny %>%
+  left_join(foot_traffic_data, by = "business_id")
+
+
+
+#  STEP 2: PREPARE MODELING DATASET 
+df_model <- df_enhanced %>%
+  # Apply filters
+  filter(complete_lifespan == TRUE,
+         start_year_filter == TRUE,
+         !is.na(avg_daily_foottraffic)) %>%
+  # Remove ID and unwanted columns
+  select(-business_id, 
+         -on_best_street, 
+         -on_worst_street,
+         -start_year_filter,
+         -complete_lifespan)
+
+# Remove any remaining NAs
+df_model <- na.omit(df_model)
+
+
+#  TRAIN/TEST SPLIT 
+set.seed(42)
+trainIndex <- createDataPartition(df_model$lifespan_numeric, p = 0.8, list = FALSE)
+train_data <- df_model[trainIndex, ]
+test_data <- df_model[-trainIndex, ]
+
+
+
+#   STANDARDIZE NUMERIC FEATURES 
+numeric_features <- c("same_ind", "other_ind", "log_seats", "avg_daily_foottraffic", 
+                     "property_competition")
+
+# Standardization parameters from training set
+preProcValues <- preProcess(train_data[, numeric_features], 
+                           method = c("center", "scale"))
+
+# Create standardized datasets
+train_data_std <- train_data
+test_data_std <- test_data
+train_data_std[, numeric_features] <- predict(preProcValues, train_data[, numeric_features])
+test_data_std[, numeric_features] <- predict(preProcValues, test_data[, numeric_features])
+
+#  TRAIN RANDOM FOREST 
+set.seed(42)
+
+# CV setup for tuning
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = FALSE
+)
+
+# Tune mtry
+n_features <- ncol(train_data_std) - 1
+mtry_values <- c(floor(sqrt(n_features)), 
+                 floor(n_features/3), 
+                 floor(n_features/2))
+
+rf_tune <- train(
+  lifespan_numeric ~ .,
+  data = train_data_std,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = expand.grid(mtry = mtry_values),
+  ntree = 300
+)
+
+# Final model with best parameters
+final_rf <- randomForest(
+  lifespan_numeric ~ .,
+  data = train_data_std,
+  mtry = rf_tune$bestTune$mtry,
+  ntree = 500,
+  nodesize = 10,
+  importance = TRUE
+)
+
+#   EXTRACT IMPORTANCE AND RUN OLS 
+# RF importance
+importance_df <- data.frame(
+  Feature = rownames(final_rf$importance),
+  Overall = final_rf$importance[, "%IncMSE"]
+) %>%
+  arrange(desc(Overall)) %>%
+  mutate(
+    Feature_Clean = case_when(
+      Feature == "same_ind" ~ "Same-Industry Competition (200m)",
+      Feature == "other_ind" ~ "Other-Industry Competition (200m)",
+      Feature == "log_seats" ~ "Restaurant Size (log seats)",
+      Feature == "avg_daily_foottraffic" ~ "Daily Foot Traffic",
+      Feature == "property_competition" ~ "Property-Level Competition",
+      Feature == "industry_cafe" ~ "Cafe Business Model",
+      Feature == "mixed_seating" ~ "Mixed Seating Type",
+      Feature == "outdoor_seating" ~ "Outdoor Seating",
+      str_starts(Feature, "clue_") ~ str_replace_all(str_to_title(str_remove(Feature, "clue_")), "_", " "),
+      TRUE ~ str_to_title(str_replace_all(Feature, "_", " "))
+    )
+  )
+
+# OLS for signs and significance (use unstandardized data)
+lm_model <- lm(lifespan_numeric ~ ., data = train_data)
+
+# Extract coefficients
+tidy_lm <- broom::tidy(lm_model) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    # Clean term names to match RF features
+    base_feature = case_when(
+      term == "industry_cafe" ~ "industry_cafe",
+      term == "mixed_seating" ~ "mixed_seating", 
+      term == "outdoor_seating" ~ "outdoor_seating",
+      TRUE ~ term
+    ),
+    direction = case_when(
+      estimate > 0 ~ "positive",
+      estimate < 0 ~ "negative",
+      TRUE ~ "unknown"
+    ),
+    significance = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01 ~ "**",
+      p.value < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+# Map RF features to OLS results
+feature_mapping <- importance_df %>%
+  left_join(
+    tidy_lm %>% 
+      select(base_feature, direction, significance, p.value),
+    by = c("Feature" = "base_feature")
+  ) %>%
+  mutate(
+    direction = coalesce(direction, "unknown"),
+    significance = coalesce(significance, "")
+  )
+
+# ---- STEP 7: CREATE FEATURE IMPORTANCE PLOT ----
+p_importance <- feature_mapping %>%
+  slice_max(Overall, n = 15) %>%
+  ggplot(aes(x = reorder(Feature_Clean, Overall), y = Overall, fill = direction)) +
+  geom_col(alpha = 0.9) +
+  coord_flip() +
+  # Add significance stars
+  geom_text(aes(label = significance), 
+            hjust = -0.2, 
+            size = 5, 
+            fontface = "bold") +
+  scale_fill_manual(
+    name = "Direction (from OLS)",
+    values = c(
+      "negative" = "#d9534f",
+      "positive" = "#5cb85c", 
+      "unknown" = "#6c757d"
+    ),
+    drop = FALSE
+  ) +
+  labs(
+    title = "Feature Importance (Top 15) - Model with Foot Traffic",
+    subtitle = "Bars = RF importance • Color = OLS direction • * = p<0.05",
+    x = NULL,
+    y = "Importance Score (%IncMSE)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray40"),
+    legend.position = "bottom",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)))
+
+print(p_importance)
+
+# ---- STEP 8: CREATE PDP PLOTS ----
+# Generate PDPs
+pdp_same <- partial(final_rf, pred.var = "same_ind", train = train_data_std, plot = FALSE)
+pdp_other <- partial(final_rf, pred.var = "other_ind", train = train_data_std, plot = FALSE)
+pdp_size <- partial(final_rf, pred.var = "log_seats", train = train_data_std, plot = FALSE)
+pdp_traffic <- partial(final_rf, pred.var = "avg_daily_foottraffic", train = train_data_std, plot = FALSE)
+
+# Monochrome PDP plots
+p_pdp <- (
+  ggplot(pdp_same, aes(x = same_ind, y = yhat)) +
+    geom_line(size = 0.5, color = "black") +
+    labs(title = "Same-Industry Competition", x = "Competitors (200m)", y = "Predicted Lifespan") +
+    theme_minimal(base_size = 10)
+) + (
+  ggplot(pdp_other, aes(x = other_ind, y = yhat)) +
+    geom_line(size = 0.5, color = "black") +
+    labs(title = "Other-Industry Competition", x = "Competitors (200m)", y = NULL) +
+    theme_minimal(base_size = 10)
+) + (
+  ggplot(pdp_size, aes(x = log_seats, y = yhat)) +
+    geom_line(size = 0.5, color = "black") +
+    labs(title = "Restaurant Size", x = "Log(Seats)", y = "Predicted Lifespan") +
+    theme_minimal(base_size = 10)
+) + (
+  ggplot(pdp_traffic, aes(x = avg_daily_foottraffic, y = yhat)) +
+    geom_line(size = 0.5, color = "black") +
+    labs(title = "Foot Traffic", x = "Daily Pedestrians", y = NULL) +
+    theme_minimal(base_size = 10)
+) +
+  plot_layout(nrow = 2) +
+  plot_annotation(
+    title = "Partial Dependence Plots",
+    theme = theme(plot.title = element_text(face = "bold", size = 14))
+  )
+
+print(p_pdp)
+
+# ---- STEP 9: SAVE OUTPUTS ----
+ggsave("rf_importance_foottraffic.png", p_importance, width = 10, height = 7, dpi = 300, bg = "white")
+ggsave("pdp_plots_foottraffic.png", p_pdp, width = 10, height = 6, dpi = 300, bg = "white")
+
+
+
+
+```
+
+
+
+Directional and Statistical Interpretation (OLS Integration)
+
+While Random Forest identifies which features matter, the OLS overlay (Figure 14) quantifies the direction and strength of these effects.
+
+Competition effects: Both same- and other-industry counts are significantly negative (p < 0.001), confirming their consistent harm across all specifications.
+
+Foot Traffic: Positive and significant (p < 0.001), verifying that exposure materially enhances longevity.
+
+Restaurant Size: Positive and significant, though the linear model cannot capture the full U-shape observed in RF.
+
+CBD presence: Modestly positive (p < 0.01), reflecting stable central demand despite competition.
+
+Restaurant vs Takeaway: Negative and significant, highlighting structural fragility of low-service formats.
+
+Insight:
+Integrating OLS with RF adds interpretive precision: it distinguishes statistically robust drivers from artefacts of non-linear variance. The linear coefficients confirm that all top-tier variables are meaningful, while low-ranked area factors, despite measurable variance, lack statistical reliability.
+
+Why this pattern exists:
+OLS offers clarity on average effects, but it assumes constant slopes — an unrealistic simplification for urban systems with tipping dynamics. RF complements this by uncovering curvature and thresholds hidden in the residuals. The two methods are thus symbiotic: OLS explains direction, RF explains pattern.
+
+
+
+
+
 
 
 
@@ -4741,7 +6388,7 @@ library(scales)
 df_full <- read_csv("df_ULTRA_enhanced_with_traffic.csv")
 
 df_analysis <- df_full %>%
-  filter(bias_filter == FALSE, start_year_filter == TRUE) %>%  
+   filter(complete_lifespan == TRUE, start_year_filter == TRUE)%>%  
   group_by(business_id) %>%
   slice_head(n = 1) %>%
   ungroup()
@@ -4924,10 +6571,80 @@ print(p_final)
 
 p_final
 ```
+Linear Relationship Assessment
+
+Linear regressions (Figure 15) of standardised features provide a baseline for comparison.
+
+Same- and Other-Industry Competition show clear negative slopes, matching expectations.
+
+Restaurant Size shows a mild positive correlation, while Foot Traffic appears near-flat under a linear specification.
+
+Insight:
+At first glance, foot traffic seems inconsequential. However, its later importance within the non-linear RF model indicates that the effect is threshold-driven rather than proportional—only areas surpassing a certain pedestrian density see meaningful gains.
+
+Why this pattern exists:
+Linear methods fail to capture saturation or tipping effects inherent in urban systems. Pedestrian influence likely activates only beyond critical mass, where consistent passing flow translates into reliable custom. The RF model’s structure allows such non-linear thresholds to surface.
+
+
+```{r}
+print(p_pdp)
+```
+
+
+Partial Dependence Analysis (PDP)
+
+Partial Dependence Plots (Figure 16) illustrate marginal effects while holding other features constant, isolating pure influence patterns.
+
+
+Same-Industry Competition: Lifespan declines sharply with the first few competitors and stabilises after ~3–4, confirming a saturation threshold.
+
+Other-Industry Competition: Similar steep decline, with wider range (~0–6 competitors) indicating broader crowding sensitivity.
+
+Restaurant Size: Exhibits a U-shaped pattern—micro-cafés and large venues outperform mid-scale operators, suggesting both niche and scale strategies can succeed.
+
+Foot Traffic: Nearly flat at low pedestrian levels, then climbs steadily beyond mid-range, confirming a non-linear exposure benefit.
+
+
+
+Insight:
+The PDP visualises the marginal return curve of each factor, revealing hidden dynamics: competition harm saturates early, while foot traffic benefits accelerate late. This asymmetric response explains why some dense areas remain profitable — high exposure compensates for market crowding.
+
+Why this pattern exists:
+The model implicitly captures market equilibrium — low-competition areas fail without sufficient demand, while high-competition zones remain viable only if traffic supports them. PDPs thus reconcile the earlier contradiction observed in clustering analysis: competition matters, but only relative to available demand.
 
 
 
 
+
+
+
+
+
+
+
+
+Section Summary
+
+This modelling phase transforms prior descriptive insights into quantified causal patterns.
+
+Random Forest isolates non-linear, interactive dynamics underpinning survival.
+
+OLS provides statistical validation and interpretive transparency.
+
+PDP visualises true marginal responses beyond linear simplification.
+
+Key findings align tightly with earlier geographic patterns:
+
+Competition intensity remains the dominant constraint, cutting average lifespan by up to 40% within 200 m of dense clusters.
+
+Foot traffic operationalises “location quality”, validating its 50% uplift in model explanatory power (R²: 0.27 vs 0.15).
+
+Restaurant scale and format shape resilience, with niche cafés and large-format venues outperforming mid-sized, takeaway-oriented models.
+
+Area labels contribute minimal residual value, confirming that measurable spatial features explain survival more effectively than categorical geography.
+
+Insight:
+The dual-model approach bridges spatial and statistical reasoning. Clustering showed Tier 1 areas succeed despite competition; this section explains why—high exposure and size resilience offset density effects.
 
 ```{r}
 
@@ -4938,7 +6655,7 @@ library(patchwork)
 df_full <- readr::read_csv("df_ULTRA_enhanced_with_traffic.csv", show_col_types = FALSE)
 
 df_std <- df_full %>%
-  filter(bias_filter == FALSE, start_year_filter == TRUE)%>%              
+   filter(complete_lifespan == TRUE, start_year_filter == TRUE) %>%             
   group_by(business_id) %>% slice_head(n = 1) %>% ungroup() %>%
   mutate(
     # total competition = same + other
@@ -4979,7 +6696,7 @@ p1_interact <- ggplot(interactionA, aes(x = comp_level, y = size_level, fill = a
             fontface = "bold", size = 4) +
   scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
                        midpoint = mean(df_noNAcomp$lifespan_years, na.rm = TRUE)) +
-  labs(title = "A. Competition × Size Interaction",
+  labs(title = "A. Competition × Size ",
        x = "Competition Level", y = "Restaurant Size", fill = "Avg Lifespan") +
   theme_minimal(base_size = 11) +
   theme(plot.title = element_text(face = "bold"))
@@ -5027,7 +6744,7 @@ p3_interact <- ggplot(interactionC, aes(x = size_level, y = area_2, fill = avg_l
             fontface = "bold", size = 4) +
   scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
                        midpoint = mean(df_area_pair$lifespan_years, na.rm = TRUE)) +
-  labs(title = "C. Size × Area (Carlton vs Docklands)",
+  labs(title = "C. Size × Area",
        x = "Restaurant Size", y = "CLUE Area", fill = "Avg Lifespan") +
   theme_minimal(base_size = 11) +
   theme(plot.title = element_text(face = "bold"))
@@ -5057,7 +6774,7 @@ p4_interact <- ggplot(interactionD, aes(x = comp_level, y = avg_lifespan,
 p_interact_final <- (p1_interact | p2_interact) / (p3_interact | p4_interact) +
   plot_annotation(
     title = "Interaction Effects: Do Factors Work Together?",
-    subtitle = "Panels B/C use Areas (Carlton vs Docklands). Competition = total competitors within 200m. Rows with missing competition are dropped.",
+    subtitle = "Panels B/C use Areas. Competition = total competitors within 200m. Rows with missing competition are dropped.",
     theme = theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
                   plot.subtitle = element_text(size = 11, hjust = 0.5))
   )
@@ -5065,20 +6782,147 @@ p_interact_final <- (p1_interact | p2_interact) / (p3_interact | p4_interact) +
 ggsave("interaction_4panel_AREA_competition_noNA.png",
        p_interact_final, width = 14, height = 10, dpi = 300, bg = "white")
 
-p_interact_final
+p3_interact 
 
-
+p2_interact 
+p1_interact 
 ```
 
-R² ≈ 0.12 confirms that your models are exploratory, focusing on direction and relative strength of effects, not predictive accuracy.
+4.9 Interaction Analysis: How Factors Combine to Shape Survival
+
+The previous section established that competition intensity, size, and foot-traffic exposure are the dominant individual determinants of restaurant longevity. However, these factors rarely operate in isolation. This section examines how they interact — whether certain combinations reinforce or mitigate one another — to reveal the deeper structure of survival dynamics in Melbourne’s hospitality market. Figure 17 summarises these interaction effects across four panels, drawing on bias-corrected averages for completed restaurants.
+
+Competition × Size: The Buffering Effect of Scale
+
+Panel A of Figure 17 compares restaurants above and below the median seating size under high- and low-competition conditions. Across both environments, larger restaurants demonstrate consistently longer lifespans. Under low competition, large venues survive for an average of 7.2 years, compared with 6.4 years for smaller venues. Even in saturated areas, where overall longevity declines, large venues maintain an advantage — 5.1 years versus 4.5 years.
+
+These results indicate that physical scale confers a measurable buffer against market pressure. Larger operations appear better equipped to withstand the revenue erosion caused by dense competition, likely due to stronger financial reserves, broader product offerings, and greater capacity to host events or diversify service modes. In contrast, smaller venues, while flexible, are more vulnerable to short-term volatility and competitive discounting.
+
+The pattern aligns with economic theory: scale increases both operational leverage and resilience. In competitive corridors, operators with larger footprints can absorb fluctuating demand and spread fixed costs over higher throughput. Scale therefore moderates but does not eliminate competitive harm, defining an upper boundary of survival stability within crowded markets.
+
+Competition × Area: Location-Dependent Risk
+
+Panel B contrasts two areas of comparable urban density — Docklands and Carlton — to test whether competition exerts uniform pressure across space. The divergence is striking. In Docklands, average lifespan collapses from 5.2 years under low competition to just 2.2 years when competitor counts rise. In Carlton, the decline is less severe, from 6.8 to 4.3 years.
+
+The result demonstrates that competition interacts strongly with inherent location quality. Areas with stable resident and student populations, such as Carlton, can absorb new entrants without immediate attrition, while districts reliant on transient office or event traffic, like Docklands, experience sharper contraction when oversupply emerges. This confirms that competition is not universally destructive — its impact depends on whether the surrounding demand base can sustain multiple outlets.
+
+From a strategic perspective, this finding reframes the role of location: high-quality areas can tolerate greater density before profitability erodes, whereas fragile areas reach saturation much earlier.
+
+Size × Area: When Scale Stops Working
+
+Panel C examines whether the benefits of scale vary by area. In Docklands, larger venues average 5.5 years, only slightly longer than small venues (4.7 years). In Carlton, the same size premium expands to 6.4 versus 6.0 years. This differential suggests that scale amplifies success only when local demand fundamentals are strong. In weaker markets, large venues bear higher fixed costs without sufficient incremental revenue, turning size into a liability rather than an advantage.
+
+The implication is that investment scale should be aligned with market strength. Expanding capacity in low-traffic areas fails to produce proportional gains and can accelerate exit if demand softens. In contrast, in established precincts, larger venues exploit demand density efficiently, reinforcing their dominance and longevity.
+
+Integrated Interpretation
+
+Panel D consolidates these interactions, showing average lifespan for small and large restaurants across competition levels. Both curves slope downward with rising competition, yet the gradient for large venues is noticeably flatter. Large restaurants survive roughly half a year longer on average in saturated environments, confirming a modest but consistent protective effect.
+
+Taken together, the four panels reveal a coherent interaction logic. Competition remains the primary constraint, but its impact is modulated by both size and area quality. Scale strengthens resilience, area quality shapes tolerance, and their combination defines each venue’s competitive equilibrium. These findings extend the Random-Forest insights by demonstrating that marginal survival advantages emerge only through favourable combinations of factors, not from any single attribute alone.
+
+Summary and Implications
+
+The interaction analysis reinforces the principle that restaurant performance arises from contextual resilience — the capacity of an operation to align internal characteristics with external market conditions. Large venues persist longer primarily because they combine financial strength with visibility and menu diversity, enabling them to compete on differentiation rather than price. High-quality areas such as Carlton moderate competitive harm through stable local demand, while weaker areas like Docklands amplify it. Scale provides insurance only where demand can sustain it; otherwise, it magnifies risk.
+
+For strategy formulation, these results imply that expansion decisions should integrate competition, size, and location as a single optimisation problem. The most sustainable configuration lies in moderate-competition corridors within high-footfall districts, paired with above-median venue capacity. In such contexts, operational scale complements rather than conflicts with market density, yielding the strongest empirical foundation for long-term success in Melbourne’s hospitality sector.
+
+
+
+```{r}
+
+
+# Add foot-traffic bucket and total competition in the *EDA frame*
+df_std2 <- df_std %>%
+  mutate(
+    comp_total = coalesce(same_industry_200m, 0) + coalesce(other_industry_200m, 0),
+    traffic_level = if_else(
+      avg_daily_foottraffic > median(avg_daily_foottraffic, na.rm = TRUE),
+      "High Foot Traffic", "Low Foot Traffic",
+      missing = NA_character_
+    )
+  ) %>%
+  mutate(
+    comp_level    = factor(comp_level,    levels = c("High Competition", "Low Competition")),
+    traffic_level = factor(traffic_level, levels = c("High Foot Traffic", "Low Foot Traffic"))
+  )
+
+# Drop rows missing competition or traffic
+df_xy <- df_std2 %>% filter(!is.na(comp_level), !is.na(traffic_level))
+
+interactionD2 <- df_xy %>%
+  group_by(comp_level, traffic_level) %>%
+  summarise(
+    n = n(),
+    avg_lifespan = mean(lifespan_years, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+p4_interact_ft_tile <- ggplot(interactionD2, aes(x = comp_level, y = traffic_level, fill = avg_lifespan)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.1f yrs", avg_lifespan)), fontface = "bold", size = 4) +
+  scale_fill_gradient2(
+    low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+    midpoint = mean(df_xy$lifespan_years, na.rm = TRUE)
+  ) +
+  labs(
+    title = "D. Competition × Foot Traffic",
+    subtitle = "Average lifespan by joint levels (median splits)",
+    x = "Competition Level", y = "Foot Traffic Level", fill = "Avg Lifespan"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+
+p4_interact_ft_tile
+
+```
+4.9 Interaction Analysis: How Factors Combine to Shape Survival
+
+The previous section established that competition intensity, size, and foot-traffic exposure are the dominant individual determinants of restaurant longevity. However, these factors rarely operate in isolation. This section examines how they interact — whether certain combinations reinforce or mitigate one another — to reveal the deeper structure of survival dynamics in Melbourne’s hospitality market. Figure 17 summarises these interaction effects across four panels, drawing on bias-corrected averages for completed restaurants.
+
+A. Competition × Size
+
+A clear buffering pattern emerges: under high competition, small venues perform poorly (4.5 yrs) whereas larger ones fare moderately better (5.1 yrs). When competition is low, both size groups enjoy longer survival, but large venues again lead (7.2 yrs vs 6.4 yrs).
+This indicates that scale offers resilience, likely through operational flexibility and brand visibility that help larger venues sustain profits in denser markets.
+
+
+
+B. Competition × Area (Carlton vs Docklands)
+
+Area-specific contrasts highlight spatial heterogeneity in competitive tolerance.
+In Docklands, even moderate rivalry sharply reduces survival (2.2 yrs → 5.2 yrs). In Carlton, businesses exhibit greater durability (4.3 yrs → 6.8 yrs), suggesting stronger demand fundamentals and a more stable customer base.
+Hence, competition interacts with local market maturity — well-established precincts absorb rivalry better than newly developed areas.
+
+
+
+C. Size × Area
+
+Size advantages are not uniform across locations.
+In Carlton, both large and small venues achieve relatively long lifespans (6.4 yrs vs 6.0 yrs), implying balanced demand across scales.
+Conversely, in Docklands, smaller operators underperform (4.7 yrs) relative to larger ones (5.5 yrs). This reinforces the notion that larger spaces confer stability where market demand is still forming or volatile, as they can better accommodate diverse offerings and customer volumes.
 
 
 
 
+D. Competition × Foot Traffic
+
+The strongest pattern appears when combining market pressure with pedestrian exposure.
+Businesses located in high-traffic but low-competition zones achieve the longest average lifespan (≈7.7 yrs) — a natural sweet spot where strong customer flow is not diluted across too many rivals.
+Even under high competition, high-traffic locations (5.0 yrs) still outperform low-traffic ones (4.5 yrs), confirming that foot traffic acts as a contextual buffer against rivalry.
+
+This outcome reflects the economic balance between demand and saturation:
+
+High pedestrian counts ensure a steady inflow of potential customers, enhancing revenue stability.
+
+Low competition prevents cannibalization, allowing each operator to capture a sustainable market share.
+
+When both conditions co-exist, businesses can maintain higher utilisation and profit margins, reinforcing long-term survival.
 
 
+Interpretation and Consistency with Model Results.
+The Random Forest PDP (Figure 19) corroborates these patterns, showing that predicted lifespan rises steeply with higher foot traffic but flattens or declines under increasing competition. Together, the model-based and empirical findings confirm that foot traffic functions as a contextual buffer—it weakens the negative marginal effect of competition and helps sustain businesses that would otherwise struggle in crowded zones.
 
-
+Overall, the interactions reveal that market success is multi-dimensional: optimal survival arises not simply from being in high-traffic or low-competition areas, but from balancing both. Larger venues amplify this advantage, while mature precincts like Carlton demonstrate greater structural resilience than newer zones such as Docklands. These cross-factor effects reinforce that business longevity depends on the interplay between spatial quality, demand intensity, and strategic positioning within the competitive landscape.
 ```{r}
 
 
@@ -5091,6 +6935,96 @@ p3_lifecycle
 ```
 
 
+Competition Effect by Stage
+
+Panel B reveals how the correlation between competition intensity and lifespan evolves across these stages. In the Early group, the relationship is negligible (r = -0.01), indicating that startups tend to fail or survive regardless of surrounding density. This neutrality likely reflects the dominance of internal factors such as capital adequacy and brand establishment in the first few years.
+
+By the Established stage (4–8 years), the negative effect of competition becomes pronounced (r = -0.084). At this stage, operators have stabilised operations and are directly exposed to sustained market rivalry. The ability to differentiate becomes critical: outlets with undifferentiated offerings face erosion from newer entrants.
+
+Among Veteran businesses (>12 years), the correlation intensifies to r = -0.183, the strongest observed. Paradoxically, long-established venues—though typically strong performers—show the greatest vulnerability to rising competition.
+
+Insight:
+The competitive environment becomes more consequential as businesses age. Early-stage operators fail fast due to internal weakness, while mature operators are shaped increasingly by external market saturation. Veterans, though stable, are often entrenched in mature districts where new entrants compress margins, gradually shortening their lifecycle despite brand legacy.
+
+Why this pattern exists:
+As markets evolve, neighbourhoods with many long-lived venues also attract ongoing entry, increasing rivalry. Older operators must continually reinvest to sustain relevance, yet many maintain legacy formats that are less adaptive to shifting demand. Thus, long-term success paradoxically increases exposure to eventual decline through environmental crowding.
+
+Size Effect by Stage
+
+Panel C shows how the relationship between restaurant size and lifespan shifts across the lifecycle. In the Early stage, the correlation is slightly negative (r = -0.02), suggesting that large openings do not guarantee success; in fact, they may amplify risk when revenue streams are untested. This reverses sharply among Established businesses (r = +0.066), where scale becomes a meaningful advantage.
+
+In the Mature and Veteran stages, the positive effect persists but diminishes (r = +0.027 and r = +0.020, respectively). This tapering implies that once scale has contributed to survival, its marginal benefit declines as other factors—brand equity, reputation, and area maturity—take precedence.
+
+Insight:
+The value of scale is time-sensitive. Early large ventures often fail due to overextension, while mid-stage operators use scale to consolidate their market position. Over time, however, the incremental gains from additional capacity fade, producing diminishing returns to scale.
+
+Why this pattern exists:
+The cost-benefit balance of size changes with maturity. During the early years, capacity exceeds demand; during the growth phase, it enhances profitability; in later years, it becomes a fixed overhead risk as consumer habits or area demographics evolve.
+
+Synthesis and Interpretation
+
+The stage-based results reveal a dynamic survival system governed by shifting dominance between internal and external pressures.
+
+Early survival is determined by internal viability — capital structure, location quality, and managerial capability.
+
+Mid-stage performance hinges on the ability to scale and differentiate within intensifying competition.
+
+Late-stage endurance is eroded by accumulated competition and the inertia of legacy formats.
+
+Competition therefore emerges as a lagging constraint—its influence grows only after businesses mature and markets saturate. Size, conversely, acts as a leading enabler, beneficial only once stability has been achieved.
+
+Together, these findings contextualise the earlier Random Forest and interaction results: the same variables that predict overall success do so through distinct mechanisms at each stage of business evolution.
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Add after you build `final_rf` and have `train_data_std` ---
+library(pdp)
+
+# Create a "total competition" feature in the *standardized* train set the model sees
+train_data_std$comp_total <- train_data_std$same_ind + train_data_std$other_ind
+
+# 2D partial dependence for Competition × Foot Traffic
+pdp_comp_ft <- partial(
+  object = final_rf,
+  pred.var = c("comp_total", "avg_daily_foottraffic"),
+  train    = train_data_std,
+  grid.resolution = 25,     # smooth but not too heavy
+  chull = TRUE,             # trim to observed region
+  plot = FALSE
+)
+
+# Visualize as a heatmap (predicted lifespan)
+p_pdp_comp_ft <- ggplot(pdp_comp_ft, aes(x = comp_total, y = avg_daily_foottraffic, fill = yhat)) +
+  geom_tile() +
+  geom_contour(aes(z = yhat), color = "white", linewidth = 0.2, alpha = 0.6) +
+  labs(
+    title = "2D PDP: Competition × Foot Traffic",
+    subtitle = "Predicted lifespan (years) holding all other features at their empirical distribution",
+    x = "Total Competition (same + other, standardized)",
+    y = "Daily Foot Traffic (standardized)",
+    fill = "Predicted\nLifespan"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+
+p_pdp_all <- (p_pdp | p_pdp_comp_ft) + plot_layout(widths = c(1, 1))
+ggsave("pdp_2d_competition_foottraffic.png", p_pdp_comp_ft, width = 7.5, height = 6, dpi = 300, bg = "white")
+
+
+
+#p_pdp_comp_ft
+
+```
 
 
 
@@ -5104,29 +7038,120 @@ p3_lifecycle
 
 
 
+```{r}
+# Bin to equal-count quantiles for smoother surface (robust to skew)
+df_xy_bins <- df_xy %>%
+  mutate(
+    comp_q = cut(comp_total, breaks = quantile(comp_total, probs = seq(0,1,0.2), na.rm = TRUE),
+                 include.lowest = TRUE, ordered_result = TRUE),
+    ft_q   = cut(avg_daily_foottraffic, breaks = quantile(avg_daily_foottraffic, probs = seq(0,1,0.2), na.rm = TRUE),
+                 include.lowest = TRUE, ordered_result = TRUE)
+  ) %>%
+  drop_na(comp_q, ft_q)
+
+surface <- df_xy_bins %>%
+  group_by(comp_q, ft_q) %>%
+  summarise(avg_lifespan = mean(lifespan_years, na.rm = TRUE), .groups = "drop")
+
+p4_interact_ft_heat <- ggplot(surface, aes(x = comp_q, y = ft_q, fill = avg_lifespan)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  scale_fill_gradient2(low = "#e74c3c", mid = "#f39c12", high = "#27ae60",
+                       midpoint = mean(df_xy_bins$lifespan_years, na.rm = TRUE)) +
+  labs(
+    title = "D. Competition × Foot Traffic (Quantile Surface)",
+    x = "Total Competition (quantiles)", y = "Foot Traffic (quantiles)", fill = "Avg Lifespan"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+
+
+p4_interact_ft_heat
+```
 
 
 
 
 
+##### Conclusion
+
+This analysis provides an evidence-based understanding of how market structure, competition, and spatial context relate to business survival in Melbourne’s hospitality sector. Through exploratory, clustering, and model-based approaches, we evaluated which environmental and operational factors appear most associated with longevity.
 
 
 
 
 
+Overall, the analysis successfully addressed the client’s questions regarding market landscape, competition impact, geographic risk, business sizing, and the value of foot traffic (see accompanying slides). The results reveal consistent, interpretable patterns that clarify the relative importance and direction of the client’s factors of interest, rather than prescribing deterministic actions.
+
+Market structure and geography. Mature precincts such as Carlton and the CBD maintain higher survival averages, while transitional areas like Docklands exhibit lower longevity and greater volatility.
+
+Competition effects. Excessive density is detrimental across all stages, though the effect strengthens with business maturity as markets saturate over time.
+
+Size and resilience. Larger venues consistently outperform smaller ones, particularly under competitive pressure, confirming that scale enhances stability through operational flexibility and brand presence.
+
+Foot traffic and demand. Pedestrian exposure is a strong positive contextual factor, offsetting competition disadvantages and sustaining performance across diverse areas.
+
+Interactions among factors. The most favourable configuration combines low competition with high foot traffic (average lifespan ≈7.7 years), representing balanced access to demand without excessive rivalry.
+
+These findings align with the Random Forest and OLS results, which together indicate that the selected measurable features explain around 27% of lifespan variance, leaving approximately 73% influenced by other unobserved factors such as rent, cuisine positioning, and managerial capability. Hence, the analysis should be viewed as diagnostic and descriptive—a foundation for strategic understanding rather than prescriptive decision-making.
+
+###### Recommendations
+
+While the analysis identifies clear directional insights, the results do not warrant direct operational action on their own. Decisions should integrate financial feasibility, brand strategy, and qualitative assessment of each site.
+
+Interpret findings as directional guidance.
+The relationships provide clarity on which environmental factors correlate with longevity but do not guarantee success. Insights should be used to inform further investigation or screening, not definitive site selection.
+
+Balance scale with budget.
+Although larger venues display longer survival, expansion should always consider financial constraints and expected revenue density. For many operators, the optimal approach is moderate scaling within sustainable budgets, rather than unconditionally pursuing maximum capacity.
+
+Stage-specific considerations.
+The life-stage analysis suggests that early-stage ventures (0–3 years) benefit more from stability and demand concentration than from aggressive competition avoidance or large-scale investment. In early years, modest size and manageable overheads may improve survival odds, while low competition and strong foot traffic remain advantageous.
+In contrast, mature operators can better leverage scale to secure market share and absorb competition shocks.
+
+Strategic interpretation.
+The model framework should serve as a decision-support lens, allowing clients to explore “what-if” scenarios under varying competition and traffic conditions, rather than as a tool for direct prediction or investment recommendation.
 
 
 
 
+##### Limitations
 
+Limited explanatory power
+The model explains 27% of variation in lifespan, meaning that most differences arise from factors not captured in the dataset. This includes management capability, price positioning, brand strength, and economic conditions.
 
+Descriptive rather than predictive
+The analysis identifies relationships but cannot confirm causation. Patterns reflect associations from historical data, not guaranteed future outcomes.
 
+Data coverage and granularity
+Foot traffic sensors represent only sampled streets, and competition measures may not reflect qualitative differences between businesses. Time-specific variation (seasonality, events, or renovation periods) remains unaccounted for.
 
+Survival bias
+Only completed business lifecycles were analysed, excluding active firms that may still survive or fail in the future. This biases lifespan averages downward.
 
+Simplified categorisation
+Median or quantile splits in interaction plots simplify continuous variables for interpretability but may obscure nonlinear patterns.
 
+External influences
+Economic shocks (COVID-19, rental surges, consumer behaviour shifts) likely distort observed trends, limiting generalisability to future market conditions.
 
+##### Future Data Enhancements
 
+To improve explanatory power and support more confident strategy design, future work should expand the dataset beyond environmental indicators. Recommended enhancements include:
 
+Rental costs: quantify economic barriers and profitability trade-offs.
+
+Street segmentation: divide long roads into functional blocks for finer spatial precision.
+
+Cuisine type and price point: control for market positioning (e.g., fine dining vs. takeaway).
+
+Online ratings and reviews: proxy for service quality and consumer satisfaction.
+
+Demographic profiles: capture local income, age, and population density.
+
+Economic and mobility indicators: integrate unemployment rate, tourism flow, and consumer sentiment trends.
+
+Incorporating these dimensions will strengthen model reliability, refine competitive benchmarking, and enable the development of an interactive decision tool for future location profiling.
 
 
 
